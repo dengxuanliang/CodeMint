@@ -2,6 +2,7 @@ import subprocess
 import sys
 from pathlib import Path
 import shutil
+import os
 
 import pytest
 from typer.testing import CliRunner
@@ -43,6 +44,18 @@ def _find_packaging_python():
     return None
 
 
+def _get_venv_paths(venv_dir, is_windows=None):
+    if is_windows is None:
+        is_windows = os.name == "nt"
+
+    if is_windows:
+        scripts_dir = venv_dir / "Scripts"
+        return scripts_dir / "python.exe", scripts_dir / "codemint.exe"
+
+    scripts_dir = venv_dir / "bin"
+    return scripts_dir / "python", scripts_dir / "codemint"
+
+
 def test_cli_shows_commands():
     result = CliRunner().invoke(app, ["--help"])
     assert result.exit_code == 0
@@ -81,6 +94,14 @@ def test_find_packaging_python_prefers_current_interpreter(monkeypatch):
     assert _find_packaging_python() == sys.executable
 
 
+def test_get_venv_paths_returns_windows_layout():
+    venv_dir = Path("C:/tmp/codemint-venv")
+    python_path, script_path = _get_venv_paths(venv_dir, is_windows=True)
+
+    assert python_path == venv_dir / "Scripts" / "python.exe"
+    assert script_path == venv_dir / "Scripts" / "codemint.exe"
+
+
 def test_installed_console_script_shows_help(tmp_path):
     repo_root = Path(__file__).resolve().parents[1]
     venv_dir = tmp_path / "venv"
@@ -97,16 +118,15 @@ def test_installed_console_script_shows_help(tmp_path):
     )
     assert create_venv.returncode == 0, create_venv.stderr
 
-    pip_path = venv_dir / "bin" / "pip"
+    venv_python, cli_path = _get_venv_paths(venv_dir)
     install = subprocess.run(
-        [str(pip_path), "install", str(repo_root)],
+        [str(venv_python), "-m", "pip", "install", str(repo_root)],
         capture_output=True,
         text=True,
         check=False,
     )
     assert install.returncode == 0, install.stderr
 
-    cli_path = venv_dir / "bin" / "codemint"
     result = subprocess.run(
         [str(cli_path), "--help"],
         capture_output=True,
