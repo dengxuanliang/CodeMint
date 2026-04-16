@@ -27,8 +27,13 @@ def test_load_config_parses_typed_defaults(tmp_path: Path) -> None:
 
 
 def test_easy_difficulty_is_rejected() -> None:
-    with pytest.raises(ValueError, match="easy is not allowed"):
+    with pytest.raises(ValueError, match="difficulty_levels|medium|hard"):
         SynthesizeConfig(difficulty_levels=["easy", "hard"])
+
+
+def test_invalid_difficulty_level_is_rejected() -> None:
+    with pytest.raises(ValueError, match="difficulty_levels"):
+        SynthesizeConfig(difficulty_levels=["medium", "expert"])
 
 
 def test_load_config_rejects_unknown_fields(tmp_path: Path) -> None:
@@ -63,6 +68,21 @@ def test_load_config_rejects_invalid_custom_pattern_choices(tmp_path: Path) -> N
     )
 
     with pytest.raises(ValueError, match="fault_type|severity"):
+        load_config(path)
+
+
+def test_load_config_rejects_invalid_severity_override_values(tmp_path: Path) -> None:
+    path = tmp_path / "codemint.yaml"
+    path.write_text(
+        (
+            "rules:\n"
+            "  severity_overrides:\n"
+            '    missing_import: "critical"\n'
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="severity_overrides"):
         load_config(path)
 
 

@@ -14,6 +14,7 @@ RetryBackoff = Literal["exponential"]
 DifficultyDistribution = Literal["balanced", "weighted_hard"]
 FaultType = Literal["comprehension", "modeling", "implementation", "edge_handling", "surface"]
 Severity = Literal["low", "medium", "high"]
+DifficultyLevel = Literal["medium", "hard"]
 
 
 class ModelConfig(StrictModel):
@@ -43,7 +44,7 @@ class CustomPatternConfig(StrictModel):
 class RulesConfig(StrictModel):
     custom_patterns: list[CustomPatternConfig] = Field(default_factory=list)
     disabled_rules: list[str] = Field(default_factory=list)
-    severity_overrides: dict[str, str] = Field(default_factory=dict)
+    severity_overrides: dict[str, Severity] = Field(default_factory=dict)
     rule_priority: list[str] = Field(default_factory=list)
 
 
@@ -62,7 +63,7 @@ class SynthesizeConfig(StrictModel):
     specs_per_weakness: int = 3
     max_per_weakness: int = 8
     top_n: int = 10
-    difficulty_levels: list[str] = Field(default_factory=lambda: ["medium", "hard"])
+    difficulty_levels: list[DifficultyLevel] = Field(default_factory=lambda: ["medium", "hard"])
     difficulty_distribution: DifficultyDistribution = "balanced"
     diversity_overlap_threshold: float = 0.5
     max_regeneration_attempts: int = 2
@@ -82,7 +83,7 @@ class SynthesizeConfig(StrictModel):
 
     @field_validator("difficulty_levels")
     @classmethod
-    def reject_easy(cls, value: list[str]) -> list[str]:
+    def reject_easy(cls, value: list[DifficultyLevel]) -> list[DifficultyLevel]:
         if "easy" in value:
             raise ValueError("easy is not allowed")
         return value
