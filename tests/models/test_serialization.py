@@ -23,6 +23,26 @@ def test_task_record_dataclass_preserves_fields() -> None:
     assert record.extra["source"] == "eval_log.jsonl"
 
 
+def test_task_record_requires_spec_fields() -> None:
+    try:
+        TaskRecord(
+            task_id=101,
+            content="Solve the problem.",
+            canonical_solution="def solve(): pass",
+            completion="def solve(): return 1",
+            test_code="assert solve() == 2",
+        )
+    except TypeError as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("TaskRecord accepted missing required spec fields")
+
+    assert "labels" in message
+    assert "accepted" in message
+    assert "metrics" in message
+    assert "extra" in message
+
+
 def test_diagnosis_round_trip() -> None:
     diagnosis = DiagnosisRecord.model_validate(
         {

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 
@@ -11,7 +11,7 @@ class TaskRecord:
     canonical_solution: str
     completion: str
     test_code: str
-    labels: dict[str, Any] = field(default_factory=dict)
-    accepted: bool = False
-    metrics: dict[str, Any] = field(default_factory=dict)
-    extra: dict[str, Any] = field(default_factory=dict)
+    labels: dict[str, Any]
+    accepted: bool
+    metrics: dict[str, Any]
+    extra: dict[str, Any]
