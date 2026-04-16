@@ -29,3 +29,46 @@ def test_load_config_parses_typed_defaults(tmp_path: Path) -> None:
 def test_easy_difficulty_is_rejected() -> None:
     with pytest.raises(ValueError, match="easy is not allowed"):
         SynthesizeConfig(difficulty_levels=["easy", "hard"])
+
+
+def test_load_config_rejects_unknown_fields(tmp_path: Path) -> None:
+    path = tmp_path / "codemint.yaml"
+    path.write_text("model:\n  unknown_field: true\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="unknown_field"):
+        load_config(path)
+
+
+def test_load_config_rejects_invalid_retry_backoff(tmp_path: Path) -> None:
+    path = tmp_path / "codemint.yaml"
+    path.write_text('model:\n  retry_backoff: "jitter"\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="retry_backoff"):
+        load_config(path)
+
+
+def test_load_config_rejects_invalid_custom_pattern_choices(tmp_path: Path) -> None:
+    path = tmp_path / "codemint.yaml"
+    path.write_text(
+        (
+            "rules:\n"
+            "  custom_patterns:\n"
+            "    - name: custom_timeout\n"
+            '      pattern: "TimeLimitExceeded|TLE"\n'
+            '      fault_type: "logic"\n'
+            '      sub_tag: "time_complexity_exceeded"\n'
+            '      severity: "critical"\n'
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="fault_type|severity"):
+        load_config(path)
+
+
+def test_load_config_rejects_invalid_difficulty_distribution(tmp_path: Path) -> None:
+    path = tmp_path / "codemint.yaml"
+    path.write_text('synthesize:\n  difficulty_distribution: "random"\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="difficulty_distribution"):
+        load_config(path)

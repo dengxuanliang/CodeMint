@@ -3,18 +3,16 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from codemint.models.base import StrictModel
 
 
-class PromptVersions(BaseModel):
+class PromptVersions(StrictModel):
     diagnose: str
     aggregate: str
     synthesize: str
 
 
-class RunSummary(BaseModel):
-    model_config = ConfigDict(protected_namespaces=())
-
+class RunSummary(StrictModel):
     diagnosed: int
     rule_screened: int
     model_analyzed: int
@@ -23,7 +21,7 @@ class RunSummary(BaseModel):
     specs_generated: int
 
 
-class RunMetadata(BaseModel):
+class RunMetadata(StrictModel):
     run_id: str
     timestamp: datetime
     config_snapshot: dict[str, Any]

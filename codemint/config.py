@@ -5,57 +5,65 @@ from pathlib import Path
 from typing import Any, Literal
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import Field, field_validator
+
+from codemint.models.base import StrictModel
 
 
-class ModelConfig(BaseModel):
+RetryBackoff = Literal["exponential"]
+DifficultyDistribution = Literal["balanced", "weighted_hard"]
+FaultType = Literal["comprehension", "modeling", "implementation", "edge_handling", "surface"]
+Severity = Literal["low", "medium", "high"]
+
+
+class ModelConfig(StrictModel):
     base_url: str = "https://api.openai.com/v1"
     api_key: str | None = None
     analysis_model: str | None = None
     evaluated_model: str | None = None
     max_concurrency: int = 5
     max_retries: int = 3
-    retry_backoff: str = "exponential"
+    retry_backoff: RetryBackoff = "exponential"
     timeout: int = 120
     max_input_tokens: int = 8000
 
 
-class EvaluationAPIConfig(BaseModel):
+class EvaluationAPIConfig(StrictModel):
     base_url: str | None = None
 
 
-class CustomPatternConfig(BaseModel):
+class CustomPatternConfig(StrictModel):
     name: str
     pattern: str
-    fault_type: str
+    fault_type: FaultType
     sub_tag: str
-    severity: str
+    severity: Severity
 
 
-class RulesConfig(BaseModel):
+class RulesConfig(StrictModel):
     custom_patterns: list[CustomPatternConfig] = Field(default_factory=list)
     disabled_rules: list[str] = Field(default_factory=list)
     severity_overrides: dict[str, str] = Field(default_factory=dict)
     rule_priority: list[str] = Field(default_factory=list)
 
 
-class AggregateConfig(BaseModel):
+class AggregateConfig(StrictModel):
     verification_level: Literal["auto", "exec", "cross-model", "self-check"] = "auto"
     max_cluster_size: int = 15
     sub_tag_limit_per_category: int = 20
 
 
-class NarrativeThemesConfig(BaseModel):
+class NarrativeThemesConfig(StrictModel):
     generic: list[str] = Field(default_factory=list)
     domain_adaptive: bool = True
 
 
-class SynthesizeConfig(BaseModel):
+class SynthesizeConfig(StrictModel):
     specs_per_weakness: int = 3
     max_per_weakness: int = 8
     top_n: int = 10
     difficulty_levels: list[str] = Field(default_factory=lambda: ["medium", "hard"])
-    difficulty_distribution: str = "balanced"
+    difficulty_distribution: DifficultyDistribution = "balanced"
     diversity_overlap_threshold: float = 0.5
     max_regeneration_attempts: int = 2
     narrative_themes: NarrativeThemesConfig = Field(default_factory=NarrativeThemesConfig)
@@ -80,7 +88,7 @@ class SynthesizeConfig(BaseModel):
         return value
 
 
-class CodeMintConfig(BaseModel):
+class CodeMintConfig(StrictModel):
     model: ModelConfig = Field(default_factory=ModelConfig)
     evaluation_api: EvaluationAPIConfig = Field(default_factory=EvaluationAPIConfig)
     rules: RulesConfig = Field(default_factory=RulesConfig)
