@@ -1,10 +1,13 @@
 [project]
 name = "codemint"
 version = "0.1.0"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "typer>=0.12",
 ]
+
+[project.scripts]
+codemint = "codemint.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]
