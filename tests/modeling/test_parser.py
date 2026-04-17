@@ -36,3 +36,17 @@ def test_parser_raises_after_retry_exhausted() -> None:
     with pytest.raises(ValidationError):
         parse_with_retry(AnswerModel, invoke)
 
+
+def test_parser_retries_once_on_invalid_json() -> None:
+    responses = iter(['{"answer":', '{"answer":"ok"}'])
+    call_contexts: list[str | None] = []
+
+    def invoke(format_error: str | None = None) -> str:
+        call_contexts.append(format_error)
+        return next(responses)
+
+    parsed = parse_with_retry(AnswerModel, invoke)
+
+    assert parsed == AnswerModel(answer="ok")
+    assert call_contexts[0] is None
+    assert call_contexts[1] is not None

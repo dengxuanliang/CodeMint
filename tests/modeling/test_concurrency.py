@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import gc
+import warnings
 
 import pytest
 
@@ -30,3 +32,17 @@ async def test_gather_limited_bounds_concurrency() -> None:
 async def test_gather_limited_rejects_non_positive_limit() -> None:
     with pytest.raises(ValueError, match="limit"):
         await gather_limited(0, [])
+
+
+@pytest.mark.asyncio
+async def test_gather_limited_closes_coroutines_on_invalid_limit() -> None:
+    coroutine = asyncio.sleep(0)
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        with pytest.raises(ValueError, match="limit"):
+            await gather_limited(0, [coroutine])
+        del coroutine
+        gc.collect()
+
+    assert not [warning for warning in caught if "was never awaited" in str(warning.message)]
