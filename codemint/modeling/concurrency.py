@@ -9,6 +9,9 @@ T = TypeVar("T")
 
 
 async def gather_limited(limit: int, awaitables: Iterable[Awaitable[T]]) -> list[T]:
+    if limit <= 0:
+        raise ValueError("limit must be greater than 0")
+
     semaphore = asyncio.Semaphore(limit)
 
     async def run(awaitable: Awaitable[T]) -> T:
@@ -17,4 +20,3 @@ async def gather_limited(limit: int, awaitables: Iterable[Awaitable[T]]) -> list
 
     tasks = [run(awaitable) for awaitable in awaitables]
     return list(await asyncio.gather(*tasks))
-

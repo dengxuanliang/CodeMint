@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import time
 from typing import Any
 
 import httpx
@@ -16,8 +17,11 @@ class ModelClient:
         transport: httpx.BaseTransport | None = None,
         sleeper: Callable[[float], None] | None = None,
     ) -> None:
+        if config.max_retries <= 0:
+            raise ValueError("max_retries must be greater than 0")
+
         self._config = config
-        self._sleeper = sleeper or (lambda _: None)
+        self._sleeper = sleeper or time.sleep
         self._client = httpx.Client(
             base_url=config.base_url.rstrip("/"),
             timeout=httpx.Timeout(config.timeout),
@@ -38,9 +42,9 @@ class ModelClient:
                 return _extract_text(payload)
             except httpx.HTTPError as error:
                 last_error = error
-                if attempt == self._config.max_retries:
+                if not _is_retryable_error(error) or attempt == self._config.max_retries:
                     break
-                self._sleeper(_retry_delay_seconds(attempt))
+                self._sleeper(_retry_delay_seconds(attempt, self._config.retry_backoff))
 
         assert last_error is not None
         raise last_error
@@ -66,5 +70,16 @@ def _extract_text(payload: dict[str, Any]) -> str:
     return choices[0]["message"]["content"]
 
 
-def _retry_delay_seconds(attempt: int) -> float:
-    return float(2 ** (attempt - 1))
+def _retry_delay_seconds(attempt: int, backoff: str) -> float:
+    if backoff == "exponential":
+        return float(2 ** (attempt - 1))
+    raise ValueError(f"Unsupported retry_backoff: {backoff}")
+
+
+def _is_retryable_error(error: httpx.HTTPError) -> bool:
+    if isinstance(error, (httpx.TimeoutException, httpx.TransportError)):
+        return True
+    if isinstance(error, httpx.HTTPStatusError):
+        status_code = error.response.status_code
+        return status_code == 429 or status_code >= 500
+    return False

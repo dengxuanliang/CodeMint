@@ -24,3 +24,9 @@ async def test_gather_limited_bounds_concurrency() -> None:
 
     assert results == [0, 2, 4, 6, 8]
     assert peak == 2
+
+
+@pytest.mark.asyncio
+async def test_gather_limited_rejects_non_positive_limit() -> None:
+    with pytest.raises(ValueError, match="limit"):
+        await gather_limited(0, [])
