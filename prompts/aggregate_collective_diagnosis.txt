@@ -1,0 +1,4 @@
+Version: v1
+
+Aggregate multiple diagnoses into a consolidated view with overlapping themes preserved.
+

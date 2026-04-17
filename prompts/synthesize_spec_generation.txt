@@ -1,0 +1,4 @@
+Version: v1
+
+Generate new task specifications that target the identified weakness without duplicating prior tasks.
+

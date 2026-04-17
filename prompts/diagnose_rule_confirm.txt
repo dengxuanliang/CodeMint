@@ -1,0 +1,4 @@
+Version: v1
+
+Confirm whether the rule-based diagnosis is supported by the evidence in the task and outputs.
+
