@@ -16,13 +16,12 @@ def find_missing_task_ids(existing_diagnoses_path: Path, expected_task_ids: list
                 f"Missing task_id in {existing_diagnoses_path} at line {line_number}"
             )
 
-        try:
-            task_id = int(row["task_id"])
-        except (TypeError, ValueError) as exc:
+        task_id = row["task_id"]
+        if isinstance(task_id, bool) or not isinstance(task_id, int):
             raise ValueError(
                 f"Invalid task_id in {existing_diagnoses_path} at line {line_number}: "
-                f"{row['task_id']!r}"
-            ) from exc
+                f"{task_id!r}"
+            )
 
         completed_task_ids.add(task_id)
 

@@ -34,3 +34,24 @@ def test_find_missing_task_ids_raises_for_invalid_task_id(tmp_path: Path) -> Non
 
     with pytest.raises(ValueError, match=r"task_id.*line 2"):
         find_missing_task_ids(existing, [1, 2, 3])
+
+
+@pytest.mark.parametrize(
+    ("raw_task_id", "expected_pattern"),
+    [
+        ("true", r"task_id.*line 2"),
+        ("1.9", r"task_id.*line 2"),
+        ('"2"', r"task_id.*line 2"),
+    ],
+)
+def test_find_missing_task_ids_rejects_non_integer_task_id_types(
+    tmp_path: Path, raw_task_id: str, expected_pattern: str
+) -> None:
+    existing = tmp_path / "diagnoses.jsonl"
+    existing.write_text(
+        f'{{"task_id": 1}}\n{{"task_id": {raw_task_id}}}\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match=expected_pattern):
+        find_missing_task_ids(existing, [1, 2, 3])

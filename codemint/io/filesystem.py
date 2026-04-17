@@ -4,6 +4,9 @@ from pathlib import Path
 
 
 def ensure_run_directory(output_root: Path, run_id: str) -> Path:
+    if run_id in {"", "."}:
+        raise ValueError(f"run_id must name a child directory under output_root, got {run_id!r}")
+
     run_path = Path(run_id)
     if run_path.is_absolute() or any(part == ".." for part in run_path.parts):
         raise ValueError(f"run_id must be a safe relative directory name, got {run_id!r}")
