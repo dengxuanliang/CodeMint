@@ -72,13 +72,15 @@ def _build_custom_rules(config: RulesConfig) -> list[DiagnosisRule]:
         rule_id = _custom_rule_id(custom.name)
         if rule_id in config.disabled_rules:
             continue
+        severity = config.severity_overrides.get(custom.sub_tag, custom.severity)
+        severity = config.severity_overrides.get(rule_id, severity)
         rules.append(
             DiagnosisRule(
                 rule_id=rule_id,
                 pattern=re.compile(custom.pattern, re.IGNORECASE | re.MULTILINE),
                 fault_type=custom.fault_type,
                 sub_tag=custom.sub_tag,
-                severity=config.severity_overrides.get(custom.sub_tag, custom.severity),
+                severity=severity,
                 priority=_custom_priority(index),
             )
         )

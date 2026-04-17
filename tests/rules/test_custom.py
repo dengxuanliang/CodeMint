@@ -32,6 +32,25 @@ def test_custom_patterns_are_merged_with_builtins() -> None:
     assert "custom_timeout" in [rule.rule_id for rule in rules]
 
 
+def test_disabled_rules_remove_custom_rules_by_name() -> None:
+    config = RulesConfig(
+        custom_patterns=[
+            CustomPatternConfig(
+                name="custom_timeout",
+                pattern="Time Limit Exceeded",
+                fault_type="implementation",
+                sub_tag="time_complexity_exceeded",
+                severity="high",
+            )
+        ],
+        disabled_rules=["custom_timeout"],
+    )
+
+    rules = build_rules(config)
+
+    assert "custom_timeout" not in [rule.rule_id for rule in rules]
+
+
 def test_severity_override_applies_by_sub_tag() -> None:
     config = RulesConfig(severity_overrides={"missing_import": "low"})
 
@@ -39,6 +58,26 @@ def test_severity_override_applies_by_sub_tag() -> None:
     by_id = {rule.rule_id: rule for rule in rules}
 
     assert by_id["R003"].severity == "low"
+
+
+def test_custom_rule_severity_override_applies_by_rule_name() -> None:
+    config = RulesConfig(
+        custom_patterns=[
+            CustomPatternConfig(
+                name="custom_timeout",
+                pattern="Time Limit Exceeded",
+                fault_type="implementation",
+                sub_tag="time_complexity_exceeded",
+                severity="high",
+            )
+        ],
+        severity_overrides={"custom_timeout": "low"},
+    )
+
+    rules = build_rules(config)
+    by_id = {rule.rule_id: rule for rule in rules}
+
+    assert by_id["custom_timeout"].severity == "low"
 
 
 def test_rule_priority_reorders_rules_without_losing_others() -> None:

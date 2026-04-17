@@ -15,6 +15,7 @@ class DiagnosisRule:
     sub_tag: str
     severity: Severity
     priority: int
+    requires_model_analysis: bool = False
 
 
 def _rule(
@@ -24,6 +25,7 @@ def _rule(
     sub_tag: str,
     severity: Severity,
     priority: int,
+    requires_model_analysis: bool = False,
 ) -> DiagnosisRule:
     return DiagnosisRule(
         rule_id=rule_id,
@@ -32,6 +34,7 @@ def _rule(
         sub_tag=sub_tag,
         severity=severity,
         priority=priority,
+        requires_model_analysis=requires_model_analysis,
     )
 
 
@@ -135,8 +138,9 @@ def default_rules() -> list[DiagnosisRule]:
             "R010",
             r"\b(AssertionError|assertion\s+failed|assert\s+failed)\b",
             "modeling",
-            "requires_model_analysis",
+            "assertion_failure",
             "medium",
             12,
+            requires_model_analysis=True,
         ),
     ]
