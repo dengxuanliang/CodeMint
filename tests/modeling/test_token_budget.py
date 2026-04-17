@@ -37,3 +37,17 @@ def test_truncate_payload_does_not_mutate_original_task() -> None:
 
     assert (task.content, task.test_code, task.canonical_solution) == original
 
+
+def test_truncate_payload_preserves_canonical_solution_before_trimming_it() -> None:
+    task = make_task()
+    content_tokens = len(task.content.split())
+    canonical_tokens = len(task.canonical_solution.split())
+
+    truncated = truncate_payload(
+        task,
+        max_input_tokens=content_tokens + canonical_tokens + 5,
+    )
+
+    assert truncated.content == task.content
+    assert truncated.canonical_solution == task.canonical_solution
+    assert truncated.test_code.split() == ["test"] * 5
