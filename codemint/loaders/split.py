@@ -15,12 +15,20 @@ class SplitFileLoader(BaseLoader):
         first_records = read_jsonl(paths[0])
         second_records = read_jsonl(paths[1])
         inference_records, result_records = self._partition_records(first_records, second_records)
-        results_by_task_id = {record["task_id"]: record for record in result_records}
+        results_by_task_id = self._index_results(result_records)
+        inference_task_ids = [record["task_id"] for record in inference_records]
+        inference_task_id_set = set(inference_task_ids)
 
-        return [
-            TaskRecord(**{**inference, **results_by_task_id[inference["task_id"]]})
-            for inference in inference_records
-        ]
+        for task_id in inference_task_ids:
+            if task_id not in results_by_task_id:
+                raise ValueError(f"Missing result row for task_id {task_id}")
+
+        extra_result_ids = set(results_by_task_id) - inference_task_id_set
+        if extra_result_ids:
+            extra_task_id = min(extra_result_ids)
+            raise ValueError(f"Extra result row for task_id {extra_task_id}")
+
+        return [TaskRecord(**{**inference, **results_by_task_id[inference["task_id"]]}) for inference in inference_records]
 
     def _partition_records(
         self,
@@ -30,3 +38,12 @@ class SplitFileLoader(BaseLoader):
         if first_records and "accepted" in first_records[0]:
             return second_records, first_records
         return first_records, second_records
+
+    def _index_results(self, result_records: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
+        results_by_task_id: dict[int, dict[str, Any]] = {}
+        for record in result_records:
+            task_id = record["task_id"]
+            if task_id in results_by_task_id:
+                raise ValueError(f"Duplicate result row for task_id {task_id}")
+            results_by_task_id[task_id] = record
+        return results_by_task_id

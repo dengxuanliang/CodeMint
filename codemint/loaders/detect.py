@@ -39,9 +39,9 @@ def detect_loader(paths: list[Path]) -> BaseLoader:
 
     if len(paths) == 2:
         fields = [set(_first_record(path)) for path in paths]
-        has_inference = any(INFERENCE_FIELDS.issubset(field) for field in fields)
-        has_results = any(RESULT_FIELDS.issubset(field) for field in fields)
-        if has_inference and has_results:
+        inference_like = [INFERENCE_FIELDS.issubset(field) and not TASK_FIELDS.issubset(field) for field in fields]
+        results_like = [RESULT_FIELDS.issubset(field) and not INFERENCE_FIELDS.issubset(field) for field in fields]
+        if inference_like.count(True) == 1 and results_like.count(True) == 1:
             return SplitFileLoader()
 
     raise ValueError("Could not detect input loader for provided paths")

@@ -6,12 +6,14 @@ from pathlib import Path
 import pytest
 
 from codemint.loaders.detect import detect_loader
+from codemint.loaders.merged import MergedFileLoader
+from codemint.loaders.split import SplitFileLoader
 
 
 def test_detects_merged_loader_for_single_file() -> None:
     loader = detect_loader([Path("tests/fixtures/input/merged_eval.jsonl")])
 
-    assert loader.__class__.__name__ == "MergedFileLoader"
+    assert isinstance(loader, MergedFileLoader)
 
 
 def test_detects_split_loader_for_inference_and_results_files() -> None:
@@ -22,7 +24,7 @@ def test_detects_split_loader_for_inference_and_results_files() -> None:
         ]
     )
 
-    assert loader.__class__.__name__ == "SplitFileLoader"
+    assert isinstance(loader, SplitFileLoader)
 
 
 def test_rejects_split_detection_for_underspecified_inference_file(tmp_path: Path) -> None:
@@ -40,3 +42,13 @@ def test_rejects_split_detection_for_underspecified_inference_file(tmp_path: Pat
 
     with pytest.raises(ValueError, match="Could not detect input loader"):
         detect_loader([inference_path, results_path])
+
+
+def test_rejects_split_detection_for_two_merged_files() -> None:
+    with pytest.raises(ValueError, match="Could not detect input loader"):
+        detect_loader(
+            [
+                Path("tests/fixtures/input/merged_eval.jsonl"),
+                Path("tests/fixtures/input/merged_eval.jsonl"),
+            ]
+        )
