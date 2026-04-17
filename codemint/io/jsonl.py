@@ -13,5 +13,25 @@ def append_jsonl(path: Path, rows: Iterable[dict[str, Any]]) -> None:
 
 
 def read_jsonl(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
     with path.open(encoding="utf-8") as handle:
-        return [json.loads(line) for line in handle if line.strip()]
+        for line_number, line in enumerate(handle, start=1):
+            stripped = line.strip()
+            if not stripped:
+                continue
+
+            try:
+                row = json.loads(stripped)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    f"Failed to parse JSONL row in {path} at line {line_number}: {exc.msg}"
+                ) from exc
+
+            if not isinstance(row, dict):
+                raise ValueError(
+                    f"Expected JSON object in {path} at line {line_number}, got {type(row).__name__}"
+                )
+
+            rows.append(row)
+
+    return rows

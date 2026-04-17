@@ -9,9 +9,21 @@ def find_missing_task_ids(existing_diagnoses_path: Path, expected_task_ids: list
     if not existing_diagnoses_path.exists():
         return list(expected_task_ids)
 
-    completed_task_ids = {
-        int(row["task_id"])
-        for row in read_jsonl(existing_diagnoses_path)
-        if "task_id" in row
-    }
+    completed_task_ids: set[int] = set()
+    for line_number, row in enumerate(read_jsonl(existing_diagnoses_path), start=1):
+        if "task_id" not in row:
+            raise ValueError(
+                f"Missing task_id in {existing_diagnoses_path} at line {line_number}"
+            )
+
+        try:
+            task_id = int(row["task_id"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Invalid task_id in {existing_diagnoses_path} at line {line_number}: "
+                f"{row['task_id']!r}"
+            ) from exc
+
+        completed_task_ids.add(task_id)
+
     return [task_id for task_id in expected_task_ids if task_id not in completed_task_ids]

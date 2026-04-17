@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from codemint.io.filesystem import artifact_paths_for_run, ensure_run_directory
 
 
@@ -21,3 +23,9 @@ def test_artifact_paths_for_run_returns_expected_files(tmp_path: Path) -> None:
     assert paths["weaknesses"] == run_dir / "weaknesses.json"
     assert paths["specs"] == run_dir / "specs.jsonl"
     assert paths["run_metadata"] == run_dir / "run_metadata.json"
+
+
+@pytest.mark.parametrize("run_id", ["/tmp/evil", "../evil", "nested/run", r"nested\run"])
+def test_ensure_run_directory_rejects_unsafe_run_ids(tmp_path: Path, run_id: str) -> None:
+    with pytest.raises(ValueError, match="run_id"):
+        ensure_run_directory(tmp_path, run_id)

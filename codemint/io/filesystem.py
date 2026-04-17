@@ -4,6 +4,12 @@ from pathlib import Path
 
 
 def ensure_run_directory(output_root: Path, run_id: str) -> Path:
+    run_path = Path(run_id)
+    if run_path.is_absolute() or any(part == ".." for part in run_path.parts):
+        raise ValueError(f"run_id must be a safe relative directory name, got {run_id!r}")
+    if "/" in run_id or "\\" in run_id:
+        raise ValueError(f"run_id must not contain path separators, got {run_id!r}")
+
     run_dir = output_root / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     return run_dir
