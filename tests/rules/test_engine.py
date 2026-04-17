@@ -1,4 +1,7 @@
+import re
+
 from codemint.config import CustomPatternConfig, RulesConfig
+from codemint.rules.builtin import DiagnosisRule
 from codemint.rules.custom import build_rules
 from codemint.rules.engine import RuleEngine
 
@@ -44,3 +47,29 @@ def test_engine_respects_custom_priority_order() -> None:
 
     assert result is not None
     assert result.rule_id == "R010"
+
+
+def test_direct_engine_order_is_deterministic_for_duplicate_priorities() -> None:
+    rules = [
+        DiagnosisRule(
+            rule_id="Z999",
+            pattern=re.compile("same"),
+            fault_type="surface",
+            sub_tag="z_rule",
+            severity="low",
+            priority=1,
+        ),
+        DiagnosisRule(
+            rule_id="A999",
+            pattern=re.compile("same"),
+            fault_type="surface",
+            sub_tag="a_rule",
+            severity="low",
+            priority=1,
+        ),
+    ]
+
+    result = RuleEngine(rules=rules).match("same")
+
+    assert result is not None
+    assert result.rule_id == "A999"

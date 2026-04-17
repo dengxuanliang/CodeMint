@@ -33,9 +33,13 @@ def build_rules(
     )
     disabled = set(rules_config.disabled_rules)
     rules = [rule for rule in default_rules() if rule.rule_id not in disabled]
+    built_in_ids = {rule.rule_id for rule in default_rules()}
+
+    _validate_custom_rule_ids(rules_config, built_in_ids)
 
     rules = [_apply_severity_override(rule, rules_config) for rule in rules]
     rules.extend(_build_custom_rules(rules_config))
+    _validate_rule_priority(rules_config.rule_priority, {rule.rule_id for rule in rules})
     return _sort_rules(rules, rules_config.rule_priority)
 
 
@@ -64,6 +68,31 @@ def _apply_severity_override(rule: DiagnosisRule, config: RulesConfig) -> Diagno
     if severity is None:
         return rule
     return replace(rule, severity=severity)
+
+
+def _validate_custom_rule_ids(config: RulesConfig, built_in_ids: set[str]) -> None:
+    seen: set[str] = set()
+    for custom in config.custom_patterns:
+        rule_id = _custom_rule_id(custom.name)
+        if not rule_id:
+            raise ValueError("custom rule name must not be empty")
+        if rule_id in seen:
+            raise ValueError(f"duplicate custom rule name: {rule_id}")
+        if rule_id in built_in_ids:
+            raise ValueError(f"custom rule name collides with built-in rule ID: {rule_id}")
+        seen.add(rule_id)
+
+
+def _validate_rule_priority(rule_priority: list[str], known_rule_ids: set[str]) -> None:
+    seen: set[str] = set()
+    for rule_id in rule_priority:
+        if rule_id in seen:
+            raise ValueError(f"duplicate rule_priority ID: {rule_id}")
+        seen.add(rule_id)
+
+    unknown = [rule_id for rule_id in rule_priority if rule_id not in known_rule_ids]
+    if unknown:
+        raise ValueError(f"unknown rule_priority ID: {unknown[0]}")
 
 
 def _build_custom_rules(config: RulesConfig) -> list[DiagnosisRule]:

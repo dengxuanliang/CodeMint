@@ -58,7 +58,8 @@ def default_rules() -> list[DiagnosisRule]:
         ),
         _rule(
             "R009",
-            r"(\berror:\s|cannot\s+find\s+symbol|expected\s+['\";}]|undefined\s+reference|"
+            r"((^|\n)\s*(error:|.*\.(cpp|cc|cxx|c|java|go):\d+:\s*error:)|"
+            r"cannot\s+find\s+symbol|expected\s+['\";}]|undefined\s+reference|"
             r"compilation\s+(error|failed)|compile\s+(error|failed)|"
             r"javac|g\+\+|gcc|go:\s|syntax\s+error:\s+unexpected)",
             "surface",
@@ -92,7 +93,8 @@ def default_rules() -> list[DiagnosisRule]:
         ),
         _rule(
             "R004",
-            r"\b(TypeError|argument\s+mismatch|wrong\s+number\s+of\s+arguments|"
+            r"\b(TypeError:.*(argument|positional|keyword|parameter|takes|given|got)|"
+            r"argument\s+mismatch|wrong\s+number\s+of\s+arguments|"
             r"missing\s+\d+\s+required\s+positional\s+argument|takes\s+\d+\s+.*arguments?)\b",
             "implementation",
             "argument_mismatch",
