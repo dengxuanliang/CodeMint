@@ -18,6 +18,18 @@ TASK_FIELDS = {
     "extra",
 }
 
+INFERENCE_FIELDS = {
+    "task_id",
+    "content",
+    "canonical_solution",
+    "completion",
+    "test_code",
+    "labels",
+    "extra",
+}
+
+RESULT_FIELDS = {"task_id", "accepted", "metrics"}
+
 
 def detect_loader(paths: list[Path]) -> BaseLoader:
     if len(paths) == 1:
@@ -27,8 +39,8 @@ def detect_loader(paths: list[Path]) -> BaseLoader:
 
     if len(paths) == 2:
         fields = [set(_first_record(path)) for path in paths]
-        has_inference = any({"task_id", "completion"}.issubset(field) for field in fields)
-        has_results = any({"task_id", "accepted", "metrics"}.issubset(field) for field in fields)
+        has_inference = any(INFERENCE_FIELDS.issubset(field) for field in fields)
+        has_results = any(RESULT_FIELDS.issubset(field) for field in fields)
         if has_inference and has_results:
             return SplitFileLoader()
 
