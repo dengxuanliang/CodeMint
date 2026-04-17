@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
 from pathlib import Path
 
-from codemint.diagnose.confirm import ConfirmAnalyzer, confirm_rule_with_model
+from codemint.diagnose.confirm import (
+    ConfirmAnalyzer,
+    confirm_rule_with_model,
+    default_confirm_analyzer,
+)
 from codemint.diagnose.deep import DeepAnalyzer, deep_analyze_with_model
 from codemint.diagnose.resume import find_missing_task_ids
 from codemint.io.jsonl import append_jsonl, read_jsonl
@@ -23,9 +26,11 @@ def run_diagnose(
     deep_analyzer: DeepAnalyzer | None = None,
 ) -> list[DiagnosisRecord]:
     active_rules = rules or build_rules()
-    confirmer = confirm_analyzer or _default_confirm_analyzer
+    confirmer = confirm_analyzer or default_confirm_analyzer
     deep = deep_analyzer or _default_deep_analyzer
     engine = RuleEngine(active_rules)
+    _validate_unique_task_ids(tasks)
+    existing_diagnoses = _load_existing_diagnoses(output_path)
 
     missing_task_ids = set(find_missing_task_ids(output_path, [task.task_id for task in tasks]))
     new_diagnoses: list[DiagnosisRecord] = []
@@ -37,8 +42,7 @@ def run_diagnose(
     if new_diagnoses:
         append_jsonl(output_path, [diagnosis.model_dump(mode="json") for diagnosis in new_diagnoses])
 
-    all_rows = read_jsonl(output_path) if output_path.exists() else []
-    return [DiagnosisRecord.model_validate(row) for row in all_rows]
+    return existing_diagnoses + new_diagnoses
 
 
 def _diagnose_task(
@@ -82,25 +86,6 @@ def _task_text(task: TaskRecord) -> str:
     return "\n".join(part for part in parts if part)
 
 
-def _default_confirm_analyzer(task: TaskRecord, rule_id: str) -> DiagnosisRecord:
-    return DiagnosisRecord(
-        task_id=task.task_id,
-        fault_type="implementation",
-        sub_tags=[f"confirmed_{rule_id.lower()}"],
-        severity="medium",
-        description=f"Model-confirmed diagnosis for {rule_id}.",
-        evidence=DiagnosisEvidence(
-            wrong_line=task.completion,
-            correct_approach="Review the matched rule context and repair the implementation.",
-            failed_test=task.test_code,
-        ),
-        enriched_labels={"rule_id": rule_id},
-        confidence=0.75,
-        diagnosis_source="rule_confirmed_by_model",
-        prompt_version="confirm-v1",
-    )
-
-
 def _default_deep_analyzer(task: TaskRecord) -> DiagnosisRecord:
     return DiagnosisRecord(
         task_id=task.task_id,
@@ -118,3 +103,18 @@ def _default_deep_analyzer(task: TaskRecord) -> DiagnosisRecord:
         diagnosis_source="model_deep",
         prompt_version="deep-v1",
     )
+
+
+def _validate_unique_task_ids(tasks: list[TaskRecord]) -> None:
+    seen: set[int] = set()
+    for task in tasks:
+        if task.task_id in seen:
+            raise ValueError(f"Duplicate task_id in input tasks: {task.task_id}")
+        seen.add(task.task_id)
+
+
+def _load_existing_diagnoses(output_path: Path) -> list[DiagnosisRecord]:
+    if not output_path.exists():
+        return []
+
+    return [DiagnosisRecord.model_validate(row) for row in read_jsonl(output_path)]

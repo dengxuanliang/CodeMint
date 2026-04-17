@@ -46,4 +46,4 @@ def test_diagnose_command_loads_tasks_and_writes_diagnoses(tmp_path: Path) -> No
     diagnoses_path = output_root / "demo-run" / "diagnoses.jsonl"
     assert diagnoses_path.exists()
     assert [row["task_id"] for row in read_jsonl(diagnoses_path)] == [1, 2]
-    assert "Wrote 2 diagnoses" in result.stdout
+    assert "Wrote 2 new diagnoses" in result.stdout

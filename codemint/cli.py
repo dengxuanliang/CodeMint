@@ -21,8 +21,11 @@ def diagnose(
     tasks = loader.load(input_paths)
     run_dir = ensure_run_directory(output_root, run_id)
     diagnoses_path = artifact_paths_for_run(run_dir)["diagnoses"]
+    existing_count = len(read_jsonl(diagnoses_path)) if diagnoses_path.exists() else 0
     diagnoses = run_diagnose(tasks, diagnoses_path)
-    typer.echo(f"Wrote {len(diagnoses)} diagnoses to {diagnoses_path}")
+    typer.echo(
+        f"Wrote {len(diagnoses) - existing_count} new diagnoses to {diagnoses_path}"
+    )
 
 
 @app.command()
