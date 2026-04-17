@@ -2,10 +2,12 @@ from pathlib import Path
 
 import typer
 
+from codemint.aggregate.pipeline import run_aggregate
 from codemint.diagnose.pipeline import run_diagnose
 from codemint.io.filesystem import artifact_paths_for_run, ensure_run_directory
 from codemint.io.jsonl import read_jsonl
 from codemint.loaders import detect_loader
+from codemint.models.diagnosis import DiagnosisRecord
 
 
 app = typer.Typer(no_args_is_help=True)
@@ -30,8 +32,19 @@ def diagnose(
 
 
 @app.command()
-def aggregate() -> None:
-    """Placeholder command."""
+def aggregate(
+    output_root: Path = typer.Option(Path("artifacts"), "--output-root"),
+    run_id: str = typer.Option("latest", "--run-id"),
+) -> None:
+    """Aggregate diagnoses into a weakness report."""
+    run_dir = ensure_run_directory(output_root, run_id)
+    artifacts = artifact_paths_for_run(run_dir)
+    diagnoses_path = artifacts["diagnoses"]
+    diagnoses = [DiagnosisRecord.model_validate(row) for row in read_jsonl(diagnoses_path)]
+    report = run_aggregate(diagnoses, artifacts["weaknesses"])
+    typer.echo(
+        f"Wrote weakness report with {len(report.weaknesses)} entries to {artifacts['weaknesses']}"
+    )
 
 
 @app.command()
