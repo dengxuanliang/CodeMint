@@ -47,3 +47,44 @@ def test_diagnose_command_loads_tasks_and_writes_diagnoses(tmp_path: Path) -> No
     assert diagnoses_path.exists()
     assert [row["task_id"] for row in read_jsonl(diagnoses_path)] == [1, 2]
     assert "Wrote 2 new diagnoses" in result.stdout
+
+
+def test_diagnose_command_can_resume_same_run_without_duplicate_rows(tmp_path: Path) -> None:
+    input_path = tmp_path / "tasks.jsonl"
+    input_path.write_text(
+        "\n".join(
+            [
+                (
+                    '{"task_id": 1, "content": "Task 1", "canonical_solution": "pass", '
+                    '"completion": "NameError: helper is not defined", "test_code": "assert True", '
+                    '"labels": {}, "accepted": false, "metrics": {}, "extra": {}}'
+                ),
+                (
+                    '{"task_id": 2, "content": "Task 2", "canonical_solution": "pass", '
+                    '"completion": "output format mismatch", "test_code": "assert True", '
+                    '"labels": {}, "accepted": false, "metrics": {}, "extra": {}}'
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    output_root = tmp_path / "artifacts"
+    runner = CliRunner()
+    args = [
+        "diagnose",
+        str(input_path),
+        "--output-root",
+        str(output_root),
+        "--run-id",
+        "demo-run",
+    ]
+
+    first = runner.invoke(app, args)
+    second = runner.invoke(app, args)
+
+    diagnoses_path = output_root / "demo-run" / "diagnoses.jsonl"
+    assert first.exit_code == 0, first.stdout
+    assert second.exit_code == 0, second.stdout
+    assert [row["task_id"] for row in read_jsonl(diagnoses_path)] == [1, 2]
+    assert "0 new diagnoses" in second.stdout

@@ -4,6 +4,7 @@ import typer
 
 from codemint.diagnose.pipeline import run_diagnose
 from codemint.io.filesystem import artifact_paths_for_run, ensure_run_directory
+from codemint.io.jsonl import read_jsonl
 from codemint.loaders import detect_loader
 
 
