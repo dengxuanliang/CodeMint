@@ -1,0 +1,37 @@
+from codemint.rules.builtin import default_rules
+
+
+def test_default_rules_include_all_expected_builtins() -> None:
+    rules = default_rules()
+
+    assert [rule.rule_id for rule in rules] == [
+        "R007",
+        "R006",
+        "R009",
+        "R001",
+        "R002",
+        "R003",
+        "R004",
+        "R008",
+        "R012",
+        "R005",
+        "R011",
+        "R010",
+    ]
+
+
+def test_builtin_rules_are_sorted_by_priority() -> None:
+    rules = default_rules()
+
+    assert [rule.priority for rule in rules] == list(range(1, 13))
+
+
+def test_builtin_rules_cover_representative_language_variants() -> None:
+    rules = {rule.rule_id: rule for rule in default_rules()}
+
+    assert rules["R009"].pattern.search("error: expected ';' before '}' token")
+    assert rules["R009"].pattern.search("Main.java:3: error: cannot find symbol")
+    assert rules["R005"].pattern.search("ArrayIndexOutOfBoundsException")
+    assert rules["R005"].pattern.search("panic: runtime error: index out of range [2] with length 2")
+    assert rules["R012"].pattern.search("ZeroDivisionError: division by zero")
+    assert rules["R012"].pattern.search("ValueError: math domain error")
