@@ -8,6 +8,7 @@ from codemint.io.filesystem import artifact_paths_for_run, ensure_run_directory
 from codemint.io.jsonl import read_jsonl
 from codemint.loaders import detect_loader
 from codemint.models.diagnosis import DiagnosisRecord
+from codemint.synthesize.pipeline import read_weakness_report, run_synthesize
 
 
 app = typer.Typer(no_args_is_help=True)
@@ -48,8 +49,16 @@ def aggregate(
 
 
 @app.command()
-def synthesize() -> None:
-    """Placeholder command."""
+def synthesize(
+    output_root: Path = typer.Option(Path("artifacts"), "--output-root"),
+    run_id: str = typer.Option("latest", "--run-id"),
+) -> None:
+    """Synthesize specs from a weakness report."""
+    run_dir = ensure_run_directory(output_root, run_id)
+    artifacts = artifact_paths_for_run(run_dir)
+    report = read_weakness_report(artifacts["weaknesses"])
+    specs = run_synthesize(report, artifacts["specs"])
+    typer.echo(f"Wrote {len(specs)} synthesized specs to {artifacts['specs']}")
 
 
 @app.command()
