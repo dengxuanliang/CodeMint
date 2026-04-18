@@ -18,7 +18,7 @@ from codemint.aggregate.repair import (
     default_verify,
     repair_diagnosis,
 )
-from codemint.models.diagnosis import DiagnosisRecord
+from codemint.models.diagnosis import DiagnosisRecord, FaultType
 from codemint.models.weakness import (
     CausalChain,
     CollectiveDiagnosis,
@@ -128,10 +128,13 @@ def _build_reclassifications(
     reclassifications: dict[int, tuple[str, str]] = {}
     for cluster in collective_clusters:
         for task_id_text, correction in cluster.collective_diagnosis.misdiagnosis_corrections.items():
+            task_id = _parse_task_id(task_id_text)
             parsed = _parse_correction(correction)
-            if parsed is None:
+            if task_id is None or parsed is None:
                 continue
-            reclassifications[int(task_id_text)] = parsed
+            if not _is_valid_fault_type(parsed[0]):
+                continue
+            reclassifications[task_id] = parsed
     return reclassifications
 
 
@@ -140,6 +143,23 @@ def _parse_correction(value: str) -> tuple[str, str] | None:
     if not separator or not sub_tag:
         return None
     return fault_type, sub_tag
+
+
+def _parse_task_id(value: str) -> int | None:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_valid_fault_type(value: str) -> bool:
+    return value in {
+        "comprehension",
+        "modeling",
+        "implementation",
+        "edge_handling",
+        "surface",
+    }
 
 
 def _normalize_sub_tags(sub_tags: list[str], tag_mappings: dict[str, str]) -> list[str]:

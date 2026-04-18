@@ -13,23 +13,35 @@ def test_semantic_tag_merge_records_mapping_when_model_confirms() -> None:
         _diagnosis(1, "implementation", ["off_by_one"]),
         _diagnosis(2, "implementation", ["index_bounds"]),
     ]
+    seen_payloads: list[list[int]] = []
 
     def collective_stub(payload: dict) -> dict:
-        assert payload["cluster"]["task_ids"] == [1]
-        return {
-            "refined_root_cause": "Boundary reasoning is inconsistent.",
-            "capability_cliff": "State-index alignment breaks near array edges.",
-            "misdiagnosed_ids": [],
-            "misdiagnosis_corrections": {},
-            "cluster_coherence": 0.92,
-            "semantic_merges": [
-                {
-                    "source_tag": "index_bounds",
-                    "target_tag": "off_by_one",
-                    "confirmed": True,
-                }
-            ],
-        }
+        seen_payloads.append(payload["cluster"]["task_ids"])
+        if payload["cluster"]["task_ids"] == [1]:
+            return {
+                "refined_root_cause": "Boundary reasoning is inconsistent.",
+                "capability_cliff": "State-index alignment breaks near array edges.",
+                "misdiagnosed_ids": [],
+                "misdiagnosis_corrections": {},
+                "cluster_coherence": 0.92,
+                "semantic_merges": [
+                    {
+                        "source_tag": "index_bounds",
+                        "target_tag": "off_by_one",
+                        "confirmed": True,
+                    }
+                ],
+            }
+        if payload["cluster"]["task_ids"] == [1, 2]:
+            return {
+                "refined_root_cause": "Merged boundary reasoning issue.",
+                "capability_cliff": "Merged boundary cliff.",
+                "misdiagnosed_ids": [],
+                "misdiagnosis_corrections": {},
+                "cluster_coherence": 0.95,
+                "semantic_merges": [],
+            }
+        raise AssertionError(f"unexpected payload: {payload['cluster']['task_ids']}")
 
     enriched_clusters, tag_mappings = apply_collective_diagnosis(
         cluster_diagnoses(diagnoses),
@@ -38,7 +50,9 @@ def test_semantic_tag_merge_records_mapping_when_model_confirms() -> None:
 
     assert [cluster.task_ids for cluster in enriched_clusters] == [[1, 2]]
     assert enriched_clusters[0].sub_tags == ["off_by_one"]
+    assert enriched_clusters[0].collective_diagnosis.refined_root_cause == "Merged boundary reasoning issue."
     assert tag_mappings == {"index_bounds": "off_by_one", "off_by_one": "off_by_one"}
+    assert seen_payloads == [[1], [1, 2]]
 
 
 def test_collective_diagnosis_reclassifies_misdiagnosed_ids(tmp_path: Path) -> None:
@@ -112,6 +126,15 @@ def test_semantic_tag_merge_chains_normalize_to_final_canonical_tag() -> None:
                     {"source_tag": "tag_a", "target_tag": "tag_b", "confirmed": True},
                 ],
             }
+        if task_ids == [1, 2, 3]:
+            return {
+                "refined_root_cause": "Final canonical root cause.",
+                "capability_cliff": "Final canonical cliff.",
+                "misdiagnosed_ids": [],
+                "misdiagnosis_corrections": {},
+                "cluster_coherence": 0.98,
+                "semantic_merges": [],
+            }
         raise AssertionError(f"unexpected payload order: {task_ids}")
 
     enriched_clusters, tag_mappings = apply_collective_diagnosis(
@@ -119,8 +142,155 @@ def test_semantic_tag_merge_chains_normalize_to_final_canonical_tag() -> None:
         collective_stub,
     )
 
-    assert [cluster.task_ids for cluster in enriched_clusters] == [[1, 2], [3]]
+    assert [cluster.task_ids for cluster in enriched_clusters] == [[1, 2, 3]]
+    assert enriched_clusters[0].collective_diagnosis.refined_root_cause == "Final canonical root cause."
     assert tag_mappings == {"tag_a": "tag_c", "tag_b": "tag_c", "tag_c": "tag_c"}
+
+
+def test_emitted_cluster_cannot_survive_later_canonical_merge(tmp_path: Path) -> None:
+    from codemint.aggregate.pipeline import run_aggregate
+
+    diagnoses = [
+        _diagnosis(1, "implementation", ["tag_c"]),
+        _diagnosis(2, "implementation", ["tag_b"]),
+        _diagnosis(3, "implementation", ["tag_a"]),
+    ]
+    output_path = tmp_path / "weaknesses.json"
+
+    def collective_stub(payload: dict) -> dict:
+        task_ids = payload["cluster"]["task_ids"]
+        if task_ids == [1]:
+            return {
+                "refined_root_cause": "Final canonical cause.",
+                "capability_cliff": "Final canonical cliff.",
+                "misdiagnosed_ids": [],
+                "misdiagnosis_corrections": {},
+                "cluster_coherence": 0.96,
+                "semantic_merges": [
+                    {"source_tag": "tag_b", "target_tag": "tag_c", "confirmed": True},
+                ],
+            }
+        if task_ids == [3]:
+            return {
+                "refined_root_cause": "Intermediate alias cause.",
+                "capability_cliff": "Intermediate alias cliff.",
+                "misdiagnosed_ids": [],
+                "misdiagnosis_corrections": {},
+                "cluster_coherence": 0.84,
+                "semantic_merges": [
+                    {"source_tag": "tag_a", "target_tag": "tag_b", "confirmed": True},
+                ],
+            }
+        if task_ids == [1, 2, 3]:
+            return {
+                "refined_root_cause": "Final canonical cause.",
+                "capability_cliff": "Final canonical cliff.",
+                "misdiagnosed_ids": [],
+                "misdiagnosis_corrections": {},
+                "cluster_coherence": 0.99,
+                "semantic_merges": [],
+            }
+        raise AssertionError(f"unexpected payload order: {task_ids}")
+
+    report = run_aggregate(
+        diagnoses,
+        output_path,
+        collective_analyze=collective_stub,
+    )
+
+    assert len(report.weaknesses) == 1
+    assert report.weaknesses[0].sub_tags == ["tag_c"]
+    assert report.weaknesses[0].sample_task_ids == [1, 2, 3]
+    assert report.tag_mappings == {"tag_a": "tag_c", "tag_b": "tag_c", "tag_c": "tag_c"}
+
+
+def test_collective_diagnosis_reflects_merged_evidence_and_task_ids(tmp_path: Path) -> None:
+    from codemint.aggregate.pipeline import run_aggregate
+
+    diagnoses = [
+        _diagnosis(10, "implementation", ["off_by_one"]),
+        _diagnosis(11, "implementation", ["index_bounds"]),
+    ]
+    output_path = tmp_path / "weaknesses.json"
+    seen_payloads: list[list[int]] = []
+
+    def collective_stub(payload: dict) -> dict:
+        seen_payloads.append(payload["cluster"]["task_ids"])
+        if payload["cluster"]["task_ids"] == [10]:
+            return {
+                "refined_root_cause": "Pre-merge root cause.",
+                "capability_cliff": "Pre-merge cliff.",
+                "misdiagnosed_ids": [],
+                "misdiagnosis_corrections": {},
+                "cluster_coherence": 0.91,
+                "semantic_merges": [
+                    {"source_tag": "index_bounds", "target_tag": "off_by_one", "confirmed": True},
+                ],
+            }
+        if payload["cluster"]["task_ids"] == [10, 11]:
+            return {
+                "refined_root_cause": "Merged root cause for tasks 10 and 11.",
+                "capability_cliff": "Merged cliff for tasks 10 and 11.",
+                "misdiagnosed_ids": [],
+                "misdiagnosis_corrections": {},
+                "cluster_coherence": 0.97,
+                "semantic_merges": [],
+            }
+        raise AssertionError(f"unexpected collective payload: {payload['cluster']['task_ids']}")
+
+    report = run_aggregate(
+        diagnoses,
+        output_path,
+        collective_analyze=collective_stub,
+    )
+
+    assert seen_payloads == [[10], [10, 11]]
+    assert len(report.weaknesses) == 1
+    assert report.weaknesses[0].frequency == 2
+    assert report.weaknesses[0].sample_task_ids == [10, 11]
+    assert report.weaknesses[0].collective_diagnosis.refined_root_cause == "Merged root cause for tasks 10 and 11."
+    assert report.weaknesses[0].collective_diagnosis.capability_cliff == "Merged cliff for tasks 10 and 11."
+
+
+def test_malformed_misdiagnosis_corrections_are_ignored_safely(tmp_path: Path) -> None:
+    from codemint.aggregate.pipeline import run_aggregate
+
+    diagnoses = [
+        _diagnosis(21, "implementation", ["loop_bound"]),
+        _diagnosis(22, "implementation", ["loop_bound"]),
+    ]
+    output_path = tmp_path / "weaknesses.json"
+
+    def collective_stub(payload: dict) -> dict:
+        assert payload["cluster"]["task_ids"] == [21, 22]
+        return {
+            "refined_root_cause": "Loop boundary issue.",
+            "capability_cliff": "Loop boundary cliff.",
+            "misdiagnosed_ids": [22],
+            "misdiagnosis_corrections": {
+                "abc": "modeling:state_tracking",
+                "22": "not_a_valid_correction",
+                "21": "invalid_fault:tag_x",
+            },
+            "cluster_coherence": 0.7,
+            "semantic_merges": [],
+        }
+
+    report = run_aggregate(
+        diagnoses,
+        output_path,
+        collective_analyze=collective_stub,
+    )
+
+    assert len(report.weaknesses) == 1
+    assert report.weaknesses[0].fault_type == "implementation"
+    assert report.weaknesses[0].sub_tags == ["loop_bound"]
+    assert report.weaknesses[0].sample_task_ids == [21, 22]
+    assert report.weaknesses[0].collective_diagnosis.misdiagnosis_corrections == {
+        "abc": "modeling:state_tracking",
+        "22": "not_a_valid_correction",
+        "21": "invalid_fault:tag_x",
+    }
 
 
 def _diagnosis(task_id: int, fault_type: str, sub_tags: list[str]) -> DiagnosisRecord:
