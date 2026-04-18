@@ -140,38 +140,73 @@ def _require_evidence_grounding(key_trap: str, original_evidence: dict[str, str]
 
 def has_concrete_evidence_reference(text: str, original_evidence: dict[str, str]) -> bool:
     candidate_text = text.lower()
-    for evidence_value in original_evidence.values():
-        if _contains_concrete_reference(candidate_text, evidence_value):
-            return True
+    wrong_line = original_evidence.get("wrong_line", "")
+    correct_approach = original_evidence.get("correct_approach", "")
+
+    if _contains_quoted_reference(candidate_text, wrong_line):
+        return True
+    if _contains_quoted_reference(candidate_text, correct_approach):
+        return True
+    if _contains_cross_field_reference(candidate_text, wrong_line, correct_approach):
+        return True
+
     return False
 
 
-def _contains_concrete_reference(candidate_text: str, evidence_value: str) -> bool:
+def _contains_quoted_reference(candidate_text: str, evidence_value: str) -> bool:
     for quoted_span in re.findall(r"`([^`]+)`", evidence_value):
         normalized = quoted_span.strip().lower()
         if normalized and normalized in candidate_text:
             return True
+    return False
 
-    tokens = _normalized_tokens(evidence_value)
-    if len(tokens) < 2:
+
+def _contains_cross_field_reference(
+    candidate_text: str,
+    wrong_line: str,
+    correct_approach: str,
+) -> bool:
+    wrong_tokens = _normalized_tokens(wrong_line)
+    correct_tokens = _normalized_tokens(correct_approach)
+    if not wrong_tokens or not correct_tokens:
         return False
 
-    overlap_count = sum(1 for token in tokens if token in candidate_text)
-    return overlap_count >= 2
+    wrong_overlap = sum(1 for token in wrong_tokens if token in candidate_text)
+    correct_overlap = sum(1 for token in correct_tokens if token in candidate_text)
+    return wrong_overlap >= 1 and correct_overlap >= 1
 
 
 def _normalized_tokens(text: str) -> list[str]:
     ignored = {
         "that",
+        "the",
+        "and",
+        "for",
+        "are",
+        "was",
+        "were",
+        "then",
+        "than",
+        "but",
+        "not",
+        "only",
+        "while",
+        "into",
+        "through",
+        "before",
+        "after",
+        "when",
+        "where",
+        "unless",
+        "instead",
+        "each",
+        "should",
         "with",
         "from",
-        "when",
         "used",
         "line",
         "test",
         "check",
-        "after",
-        "each",
         "segment",
         "original",
         "evidence",
@@ -181,11 +216,10 @@ def _normalized_tokens(text: str) -> list[str]:
         "this",
         "same",
         "mistake",
-        "should",
         "punish",
-        "into",
-        "through",
-        "before",
+        "index",
+        "ending",
+        "last",
     }
     return [
         token

@@ -54,7 +54,55 @@ def test_generic_key_trap_without_concrete_evidence_reference_is_rejected() -> N
         )
 
 
-def test_key_trap_with_concrete_evidence_reference_passes() -> None:
+def test_key_trap_using_only_failed_test_words_is_rejected() -> None:
+    from codemint.synthesize.generate import generate_spec
+
+    weakness = _weakness()
+    original_evidence = _original_evidence()
+
+    with pytest.raises(ValueError, match="key_trap must reference original evidence"):
+        generate_spec(
+            weakness,
+            diversity_tags=DiversityTags(
+                narrative_theme="sensors",
+                data_structure="array",
+                constraint_scale="medium",
+            ),
+            invoke_model=lambda prompt: {
+                "algorithm_type": "prefix sums",
+                "difficulty": "medium",
+                "narrative_theme": "sensors",
+                "constraints": {
+                    "n_range": [1, 5000],
+                    "value_range": [0, 1000],
+                    "time_limit": "1s",
+                    "memory_limit": "256MB",
+                },
+                "key_trap": "The trap is a last segment ending at index n-1.",
+                "must_cover": ["off_by_one", "boundary updates"],
+                "must_avoid": ["sorting"],
+                "verification_spec": {
+                    "min_test_cases": 4,
+                    "must_include_edge_cases": ["single element", "last segment"],
+                    "brute_force_verifiable": True,
+                    "brute_force_complexity_limit": "O(n^2)",
+                },
+                "generation_hints": {
+                    "solution_approach": "Track prefix totals and compare window endpoints.",
+                    "common_wrong_approach": "Shift the right pointer before evaluating the current window.",
+                    "distinguishing_test": "A valid window ending at the final index",
+                },
+                "language_constraint": {
+                    "target_languages": ["python", "cpp"],
+                    "language_specific": False,
+                },
+            },
+            original_evidence=original_evidence,
+            spec_index=1,
+        )
+
+
+def test_key_trap_grounded_across_wrong_line_and_correct_approach_passes() -> None:
     from codemint.synthesize.feasibility import check_feasibility
     from codemint.synthesize.generate import generate_spec
 
@@ -79,8 +127,8 @@ def test_key_trap_with_concrete_evidence_reference_passes() -> None:
                 "memory_limit": "256MB",
             },
             "key_trap": (
-                "The trap is the skipped final endpoint: `range(l, r)` misses index n-1 "
-                "unless the terminal index is checked after expansion."
+                "The trap keeps `range(l, r)` in place and only passes when the solver "
+                "checks the terminal index after each expansion instead of skipping it."
             ),
             "must_cover": ["off_by_one", "boundary updates"],
             "must_avoid": ["sorting"],
@@ -107,8 +155,8 @@ def test_key_trap_with_concrete_evidence_reference_passes() -> None:
     feasibility = check_feasibility(spec, original_evidence=original_evidence)
 
     assert isinstance(spec, SpecRecord)
-    assert "range(l, r)" in spec.problem_spec.key_trap
-    assert spec.problem_spec.must_cover[:2] == ["off_by_one", "boundary updates"]
+    assert "`range(l, r)`" in spec.problem_spec.key_trap
+    assert "checks the terminal index" in spec.problem_spec.key_trap
     assert spec.prompt_version == "v1"
     assert feasibility.accepted is True
 

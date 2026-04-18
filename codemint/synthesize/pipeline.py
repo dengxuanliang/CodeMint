@@ -117,7 +117,8 @@ def build_original_evidence_map(
     grouped: dict[str, list[DiagnosisRecord]] = {}
     for diagnosis in diagnoses:
         for sub_tag in diagnosis.sub_tags:
-            grouped.setdefault(sub_tag, []).append(diagnosis)
+            canonical_tag = report.tag_mappings.get(sub_tag, sub_tag)
+            grouped.setdefault(canonical_tag, []).append(diagnosis)
 
     evidence_map: dict[str, dict[str, str]] = {}
     for weakness in report.weaknesses:
