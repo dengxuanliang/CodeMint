@@ -293,6 +293,60 @@ def test_malformed_misdiagnosis_corrections_are_ignored_safely(tmp_path: Path) -
     }
 
 
+def test_reclassified_tag_is_renormalized_to_canonical_mapping(tmp_path: Path) -> None:
+    from codemint.aggregate.pipeline import run_aggregate
+
+    diagnoses = [
+        _diagnosis(30, "implementation", ["off_by_one"]),
+        _diagnosis(31, "implementation", ["loop_bound"]),
+    ]
+    output_path = tmp_path / "weaknesses.json"
+
+    def collective_stub(payload: dict) -> dict:
+        task_ids = payload["cluster"]["task_ids"]
+        if task_ids == [30]:
+            return {
+                "refined_root_cause": "Boundary reasoning issue.",
+                "capability_cliff": "Boundary reasoning cliff.",
+                "misdiagnosed_ids": [],
+                "misdiagnosis_corrections": {},
+                "cluster_coherence": 0.93,
+                "semantic_merges": [
+                    {"source_tag": "index_bounds", "target_tag": "off_by_one", "confirmed": True},
+                ],
+            }
+        if task_ids == [31]:
+            return {
+                "refined_root_cause": "Loop issue.",
+                "capability_cliff": "Loop cliff.",
+                "misdiagnosed_ids": [31],
+                "misdiagnosis_corrections": {"31": "modeling:index_bounds"},
+                "cluster_coherence": 0.7,
+                "semantic_merges": [],
+            }
+        if task_ids == [30, 31]:
+            return {
+                "refined_root_cause": "Merged canonical issue.",
+                "capability_cliff": "Merged canonical cliff.",
+                "misdiagnosed_ids": [],
+                "misdiagnosis_corrections": {},
+                "cluster_coherence": 0.97,
+                "semantic_merges": [],
+            }
+        raise AssertionError(f"unexpected payload order: {task_ids}")
+
+    report = run_aggregate(
+        diagnoses,
+        output_path,
+        collective_analyze=collective_stub,
+    )
+
+    modeling = next(entry for entry in report.weaknesses if entry.fault_type == "modeling")
+    assert modeling.sub_tags == ["off_by_one"]
+    assert modeling.sample_task_ids == [31]
+    assert report.tag_mappings["index_bounds"] == "off_by_one"
+
+
 def _diagnosis(task_id: int, fault_type: str, sub_tags: list[str]) -> DiagnosisRecord:
     return DiagnosisRecord(
         task_id=task_id,

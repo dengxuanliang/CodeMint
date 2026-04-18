@@ -115,7 +115,7 @@ def _apply_collective_adjustments(
         correction = reclassifications.get(current.task_id)
         if correction is not None:
             current.fault_type = correction[0]
-            current.sub_tags = [correction[1]]
+            current.sub_tags = _normalize_sub_tags([correction[1]], tag_mappings)
 
         adjusted.append(current)
 
