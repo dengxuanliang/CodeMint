@@ -14,18 +14,18 @@ _DIFFICULTY_SCORES = {
 
 def build_rankings(weaknesses: list[WeaknessEntry]) -> RankingSet:
     return RankingSet(
-        by_frequency=_rank_ids(weaknesses, key=lambda weakness: (weakness.frequency, weakness.trainability)),
+        by_frequency=_rank_ids(weaknesses, key=lambda weakness: weakness.frequency),
         by_difficulty=_rank_ids(
             weaknesses,
-            key=lambda weakness: (_DIFFICULTY_SCORES[weakness.fault_type], weakness.frequency),
+            key=lambda weakness: _DIFFICULTY_SCORES[weakness.fault_type],
         ),
-        by_trainability=_rank_ids(weaknesses, key=lambda weakness: (weakness.trainability, weakness.frequency)),
+        by_trainability=_rank_ids(weaknesses, key=lambda weakness: weakness.trainability),
     )
 
 
 def _rank_ids(weaknesses: list[WeaknessEntry], *, key) -> list[int]:
     ordered = sorted(
         weaknesses,
-        key=lambda weakness: (-key(weakness)[0], -key(weakness)[1], weakness.rank),
+        key=lambda weakness: (-key(weakness), weakness.rank),
     )
     return [weakness.rank for weakness in ordered]

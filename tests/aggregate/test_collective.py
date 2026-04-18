@@ -78,6 +78,51 @@ def test_collective_diagnosis_reclassifies_misdiagnosed_ids(tmp_path: Path) -> N
     assert modeling.sample_task_ids == [11]
 
 
+def test_semantic_tag_merge_chains_normalize_to_final_canonical_tag() -> None:
+    from codemint.aggregate.collective import apply_collective_diagnosis
+    from codemint.aggregate.cluster import cluster_diagnoses
+
+    diagnoses = [
+        _diagnosis(1, "implementation", ["tag_c"]),
+        _diagnosis(2, "implementation", ["tag_b"]),
+        _diagnosis(3, "implementation", ["tag_a"]),
+    ]
+
+    def collective_stub(payload: dict) -> dict:
+        task_ids = payload["cluster"]["task_ids"]
+        if task_ids == [1]:
+            return {
+                "refined_root_cause": "Canonical root cause.",
+                "capability_cliff": "Canonical cliff.",
+                "misdiagnosed_ids": [],
+                "misdiagnosis_corrections": {},
+                "cluster_coherence": 0.95,
+                "semantic_merges": [
+                    {"source_tag": "tag_b", "target_tag": "tag_c", "confirmed": True},
+                ],
+            }
+        if task_ids == [3]:
+            return {
+                "refined_root_cause": "Alias root cause.",
+                "capability_cliff": "Alias cliff.",
+                "misdiagnosed_ids": [],
+                "misdiagnosis_corrections": {},
+                "cluster_coherence": 0.88,
+                "semantic_merges": [
+                    {"source_tag": "tag_a", "target_tag": "tag_b", "confirmed": True},
+                ],
+            }
+        raise AssertionError(f"unexpected payload order: {task_ids}")
+
+    enriched_clusters, tag_mappings = apply_collective_diagnosis(
+        cluster_diagnoses(diagnoses),
+        collective_stub,
+    )
+
+    assert [cluster.task_ids for cluster in enriched_clusters] == [[1, 2], [3]]
+    assert tag_mappings == {"tag_a": "tag_c", "tag_b": "tag_c", "tag_c": "tag_c"}
+
+
 def _diagnosis(task_id: int, fault_type: str, sub_tags: list[str]) -> DiagnosisRecord:
     return DiagnosisRecord(
         task_id=task_id,

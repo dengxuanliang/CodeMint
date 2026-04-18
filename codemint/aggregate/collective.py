@@ -44,7 +44,7 @@ def apply_collective_diagnosis(
     analyze: CollectiveAnalyzer | None = None,
 ) -> tuple[list[CollectiveCluster], dict[str, str]]:
     analyzer = analyze or default_collective_analyze
-    tag_mappings = _initialize_tag_mappings(clusters)
+    raw_tag_mappings = _initialize_tag_mappings(clusters)
     consumed_indices: set[int] = set()
     enriched_clusters: list[CollectiveCluster] = []
     ordered_indices = sorted(
@@ -58,13 +58,16 @@ def apply_collective_diagnosis(
 
         cluster = clusters[index]
         analysis = CollectiveAnalysisResult.model_validate(
-            analyzer(_build_collective_payload(cluster, clusters, consumed_indices, tag_mappings))
+            analyzer(_build_collective_payload(cluster, clusters, consumed_indices, _resolve_tag_mappings(raw_tag_mappings)))
         )
         primary_tag = cluster.sub_tags[0] if cluster.sub_tags else "unknown"
         merged_diagnoses = list(cluster.diagnoses)
 
         for merge in analysis.semantic_merges:
-            if not merge.confirmed or merge.target_tag != primary_tag:
+            if not merge.confirmed:
+                continue
+            raw_tag_mappings[merge.source_tag] = merge.target_tag
+            if merge.target_tag != primary_tag:
                 continue
             source_index = _find_cluster_index(clusters, cluster.fault_type, merge.source_tag)
             if source_index is None or source_index == index or source_index in consumed_indices:
@@ -72,10 +75,9 @@ def apply_collective_diagnosis(
             consumed_indices.add(source_index)
             merged_cluster = clusters[source_index]
             merged_diagnoses.extend(merged_cluster.diagnoses)
-            tag_mappings[merge.source_tag] = merge.target_tag
 
         sorted_diagnoses = sorted(merged_diagnoses, key=lambda record: record.task_id)
-        tag_mappings.setdefault(primary_tag, primary_tag)
+        raw_tag_mappings.setdefault(primary_tag, primary_tag)
         enriched_clusters.append(
             CollectiveCluster(
                 key=(cluster.fault_type, primary_tag),
@@ -93,7 +95,7 @@ def apply_collective_diagnosis(
             )
         )
 
-    return enriched_clusters, tag_mappings
+    return enriched_clusters, _resolve_tag_mappings(raw_tag_mappings)
 
 
 def default_collective_analyze(payload: dict) -> dict:
@@ -172,3 +174,22 @@ def _build_collective_payload(
         ],
         "tag_mappings": dict(tag_mappings),
     }
+
+
+def _resolve_tag_mappings(tag_mappings: dict[str, str]) -> dict[str, str]:
+    resolved: dict[str, str] = {}
+    for source_tag in tag_mappings:
+        resolved[source_tag] = _resolve_canonical_tag(source_tag, tag_mappings)
+    return resolved
+
+
+def _resolve_canonical_tag(source_tag: str, tag_mappings: dict[str, str]) -> str:
+    current = source_tag
+    visited: set[str] = set()
+
+    while True:
+        target = tag_mappings.get(current, current)
+        if target == current or target in visited:
+            return target
+        visited.add(current)
+        current = target
