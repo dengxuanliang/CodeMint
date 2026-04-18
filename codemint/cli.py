@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 
 import typer
 
@@ -16,6 +17,7 @@ from codemint.synthesize.pipeline import read_diagnoses, read_weakness_report, r
 
 
 app = typer.Typer(no_args_is_help=True)
+RunStage = Literal["diagnose", "aggregate", "synthesize"]
 
 
 @app.command()
@@ -71,17 +73,19 @@ def run(
     input_paths: list[Path] = typer.Argument(..., exists=True, readable=True),
     output_root: Path = typer.Option(Path("artifacts"), "--output-root"),
     run_id: str = typer.Option("latest", "--run-id"),
+    start_from: RunStage = typer.Option("diagnose", "--from"),
     dry_run: bool = typer.Option(False, "--dry-run"),
 ) -> None:
     """Run the full diagnose -> aggregate -> synthesize pipeline."""
     if dry_run:
-        typer.echo(format_dry_run_summary(estimate_run(input_paths)))
+        typer.echo(format_dry_run_summary(estimate_run(input_paths, start_from=start_from)))
         return
 
     result = run_pipeline(
         input_paths=input_paths,
         output_root=output_root,
         run_id=run_id,
+        start_from=start_from,
         config=CodeMintConfig(),
     )
     typer.echo(format_run_summary(result.metadata))

@@ -3,6 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from typer.testing import CliRunner
+
+from codemint.cli import app
 from codemint.io.jsonl import append_jsonl, read_jsonl
 from codemint.models.diagnosis import DiagnosisEvidence, DiagnosisRecord
 from codemint.models.spec import (
@@ -59,10 +62,10 @@ def test_run_skips_complete_stage_and_gap_fills_incomplete_stage(tmp_path: Path)
         run_synthesize_stage=lambda report, output_path: _record_synthesize(synthesize_calls, report, output_path),
     )
 
-    assert result.stages_executed == ["diagnose"]
+    assert result.stages_executed == ["diagnose", "aggregate", "synthesize"]
     assert diagnose_calls == [[1, 2, 3]]
-    assert aggregate_calls == []
-    assert synthesize_calls == []
+    assert aggregate_calls == [[1, 3, 2]]
+    assert synthesize_calls == [[1]]
     assert [row["task_id"] for row in read_jsonl(run_dir / "diagnoses.jsonl")] == [1, 3, 2]
     assert json.loads((run_dir / "run_metadata.json").read_text(encoding="utf-8"))["summary"] == {
         "diagnosed": 3,
@@ -72,6 +75,97 @@ def test_run_skips_complete_stage_and_gap_fills_incomplete_stage(tmp_path: Path)
         "weaknesses_found": 1,
         "specs_generated": 1,
     }
+
+
+def test_run_start_from_aggregate_skips_diagnose_and_forces_downstream_rerun(tmp_path: Path) -> None:
+    input_path = tmp_path / "tasks.jsonl"
+    input_path.write_text(
+        "\n".join(
+            [
+                _task(1, "NameError: helper is not defined"),
+                _task(2, "Wrong answer on hidden case"),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    output_root = tmp_path / "artifacts"
+    run_dir = output_root / "demo-run"
+    run_dir.mkdir(parents=True)
+    append_jsonl(
+        run_dir / "diagnoses.jsonl",
+        [_diagnosis(1).model_dump(mode="json"), _diagnosis(2, source="model_deep").model_dump(mode="json")],
+    )
+    (run_dir / "weaknesses.json").write_text(_report().model_dump_json(), encoding="utf-8")
+    append_jsonl(run_dir / "specs.jsonl", [_spec().model_dump(mode="json")])
+
+    diagnose_calls: list[list[int]] = []
+    aggregate_calls: list[list[int]] = []
+    synthesize_calls: list[list[int]] = []
+
+    result = run_pipeline(
+        input_paths=[input_path],
+        output_root=output_root,
+        run_id="demo-run",
+        start_from="aggregate",
+        run_diagnose_stage=lambda tasks, output_path: _record_diagnose(diagnose_calls, tasks, output_path),
+        run_aggregate_stage=lambda diagnoses, output_path: _record_aggregate(aggregate_calls, diagnoses, output_path),
+        run_synthesize_stage=lambda report, output_path: _record_synthesize(synthesize_calls, report, output_path),
+    )
+
+    assert result.stages_executed == ["aggregate", "synthesize"]
+    assert diagnose_calls == []
+    assert aggregate_calls == [[1, 2]]
+    assert synthesize_calls == [[1]]
+
+
+def test_run_cli_from_override_wires_stage_control_and_rich_dry_run(tmp_path: Path) -> None:
+    input_path = tmp_path / "tasks.jsonl"
+    input_path.write_text(
+        "\n".join(
+            [
+                _task(1, "NameError: helper is not defined"),
+                _task(2, "Wrong answer on hidden case"),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    output_root = tmp_path / "artifacts"
+    run_dir = output_root / "demo-run"
+    run_dir.mkdir(parents=True)
+    append_jsonl(
+        run_dir / "diagnoses.jsonl",
+        [_diagnosis(1).model_dump(mode="json"), _diagnosis(2, source="model_deep").model_dump(mode="json")],
+    )
+    (run_dir / "weaknesses.json").write_text(_report().model_dump_json(), encoding="utf-8")
+    append_jsonl(run_dir / "specs.jsonl", [_spec().model_dump(mode="json")])
+    runner = CliRunner()
+
+    dry_run_result = runner.invoke(app, ["run", str(input_path), "--dry-run"])
+
+    assert dry_run_result.exit_code == 0, dry_run_result.stdout
+    assert "Dry run total:" in dry_run_result.stdout
+    assert "diagnose: 2 calls" in dry_run_result.stdout
+    assert "aggregate: 1 call" in dry_run_result.stdout
+    assert "synthesize: 2 calls" in dry_run_result.stdout
+
+    from_result = runner.invoke(
+        app,
+        [
+            "run",
+            str(input_path),
+            "--output-root",
+            str(output_root),
+            "--run-id",
+            "demo-run",
+            "--from",
+            "aggregate",
+        ],
+    )
+
+    assert from_result.exit_code == 0, from_result.stdout
+    assert "stages=aggregate,synthesize" in from_result.stdout
 
 
 def _record_diagnose(

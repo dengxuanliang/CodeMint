@@ -70,6 +70,44 @@ def test_run_metadata_captures_prompt_versions_and_summary(tmp_path: Path) -> No
     }
 
 
+def test_run_metadata_records_stage_override_execution(tmp_path: Path) -> None:
+    input_path = tmp_path / "tasks.jsonl"
+    input_path.write_text(
+        "\n".join(
+            [
+                '{"task_id": 1, "content": "task one", "canonical_solution": "ok", "completion": "bad one", "test_code": "assert True", "labels": {}, "accepted": false, "metrics": {}, "extra": {}}',
+                '{"task_id": 2, "content": "task two", "canonical_solution": "ok", "completion": "bad two", "test_code": "assert True", "labels": {}, "accepted": false, "metrics": {}, "extra": {}}',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    output_root = tmp_path / "artifacts"
+    run_dir = output_root / "run-002"
+    run_dir.mkdir(parents=True)
+    append_jsonl(
+        run_dir / "diagnoses.jsonl",
+        [diagnosis.model_dump(mode="json") for diagnosis in _write_diagnoses(run_dir / "diagnoses.jsonl")],
+    )
+    (run_dir / "weaknesses.json").write_text(_report().model_dump_json(), encoding="utf-8")
+    append_jsonl(run_dir / "specs.jsonl", [_spec("spec-0001").model_dump(mode="json")])
+
+    run_pipeline(
+        input_paths=[input_path],
+        output_root=output_root,
+        run_id="run-002",
+        start_from="synthesize",
+        config=CodeMintConfig.model_validate({"model": {"analysis_model": "gpt-4.1-mini"}}),
+        run_synthesize_stage=lambda weakness_report, output_path: _write_specs(
+            output_path, [_spec("spec-0009")]
+        ),
+    )
+
+    metadata = json.loads((run_dir / "run_metadata.json").read_text(encoding="utf-8"))
+
+    assert metadata["stages_executed"] == ["synthesize"]
+
+
 def _write_diagnoses(output_path: Path) -> list[DiagnosisRecord]:
     diagnoses = [
         DiagnosisRecord(

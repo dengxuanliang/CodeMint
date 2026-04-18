@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from codemint.run.dry_run import estimate_run
+from codemint.logging import format_dry_run_summary
 
 
 def test_dry_run_reports_estimated_calls_tokens_and_time(tmp_path: Path) -> None:
@@ -23,7 +24,15 @@ def test_dry_run_reports_estimated_calls_tokens_and_time(tmp_path: Path) -> None
 
     assert estimate.input_count == 3
     assert estimate.stage_calls == {"diagnose": 3, "aggregate": 1, "synthesize": 3}
+    assert estimate.stage_tokens == {"diagnose": 24, "aggregate": 4, "synthesize": 24}
+    assert estimate.stage_seconds == {"diagnose": 9, "aggregate": 3, "synthesize": 9}
     assert estimate.estimated_model_calls == 7
     assert estimate.estimated_tokens == 52
     assert estimate.estimated_seconds == 21
-    assert estimate.summary_line == "Dry run: 7 model calls, ~52 tokens, ~21s"
+    assert estimate.summary_line == "Dry run total: 7 model calls, ~52 tokens, ~21s"
+    assert format_dry_run_summary(estimate).splitlines() == [
+        "Dry run total: 7 model calls, ~52 tokens, ~21s",
+        "diagnose: 3 calls, ~24 tokens, ~9s",
+        "aggregate: 1 call, ~4 tokens, ~3s",
+        "synthesize: 3 calls, ~24 tokens, ~9s",
+    ]

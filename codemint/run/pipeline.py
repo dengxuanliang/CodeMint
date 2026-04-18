@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,6 +16,7 @@ from codemint.models.run_metadata import PromptVersions, RunMetadata, RunSummary
 from codemint.models.spec import SpecRecord
 from codemint.models.weakness import WeaknessReport
 from codemint.prompts.registry import load_prompt
+from codemint.run.dry_run import RunStage
 from codemint.synthesize.pipeline import read_weakness_report, run_synthesize
 
 
@@ -37,6 +37,7 @@ def run_pipeline(
     input_paths: list[Path],
     output_root: Path,
     run_id: str,
+    start_from: RunStage = "diagnose",
     config: CodeMintConfig | None = None,
     run_diagnose_stage: DiagnoseStage | None = None,
     run_aggregate_stage: AggregateStage | None = None,
@@ -48,25 +49,35 @@ def run_pipeline(
     run_dir = ensure_run_directory(output_root, run_id)
     artifacts = artifact_paths_for_run(run_dir)
     stages_executed: list[str] = []
+    forced_stages = set(_selected_stages(start_from))
+    rerun_downstream = False
 
     diagnoses: list[DiagnosisRecord]
-    if _should_run_diagnose(artifacts["diagnoses"], len(tasks)):
+    if "diagnose" in forced_stages and _should_run_diagnose(artifacts["diagnoses"], len(tasks)):
         diagnoses = (run_diagnose_stage or run_diagnose)(tasks, artifacts["diagnoses"])
         stages_executed.append("diagnose")
+        rerun_downstream = True
     else:
         diagnoses = _read_diagnoses(artifacts["diagnoses"])
 
-    if artifacts["weaknesses"].exists():
-        report = read_weakness_report(artifacts["weaknesses"])
-    else:
+    should_run_aggregate = "aggregate" in forced_stages and (
+        rerun_downstream or start_from in {"aggregate", "synthesize"} or not artifacts["weaknesses"].exists()
+    )
+    if should_run_aggregate:
         report = (run_aggregate_stage or run_aggregate)(diagnoses, artifacts["weaknesses"])
         stages_executed.append("aggregate")
-
-    if artifacts["specs"].exists():
-        specs = _read_specs(artifacts["specs"])
+        rerun_downstream = True
     else:
+        report = read_weakness_report(artifacts["weaknesses"])
+
+    should_run_synthesize = "synthesize" in forced_stages and (
+        rerun_downstream or start_from == "synthesize" or not artifacts["specs"].exists()
+    )
+    if should_run_synthesize:
         specs = (run_synthesize_stage or run_synthesize)(report, artifacts["specs"])
         stages_executed.append("synthesize")
+    else:
+        specs = _read_specs(artifacts["specs"])
 
     metadata = RunMetadata(
         run_id=run_id,
@@ -118,3 +129,8 @@ def _build_summary(
         weaknesses_found=len(report.weaknesses),
         specs_generated=len(specs),
     )
+
+
+def _selected_stages(start_from: RunStage) -> tuple[RunStage, ...]:
+    ordered: tuple[RunStage, ...] = ("diagnose", "aggregate", "synthesize")
+    return ordered[ordered.index(start_from) :]
