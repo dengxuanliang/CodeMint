@@ -3,11 +3,15 @@ from pathlib import Path
 import typer
 
 from codemint.aggregate.pipeline import run_aggregate
+from codemint.config import CodeMintConfig
 from codemint.diagnose.pipeline import run_diagnose
 from codemint.io.filesystem import artifact_paths_for_run, ensure_run_directory
 from codemint.io.jsonl import read_jsonl
 from codemint.loaders import detect_loader
+from codemint.logging import format_dry_run_summary, format_run_summary
 from codemint.models.diagnosis import DiagnosisRecord
+from codemint.run.dry_run import estimate_run
+from codemint.run.pipeline import run_pipeline
 from codemint.synthesize.pipeline import read_weakness_report, run_synthesize
 
 
@@ -62,8 +66,24 @@ def synthesize(
 
 
 @app.command()
-def run() -> None:
-    """Placeholder command."""
+def run(
+    input_paths: list[Path] = typer.Argument(..., exists=True, readable=True),
+    output_root: Path = typer.Option(Path("artifacts"), "--output-root"),
+    run_id: str = typer.Option("latest", "--run-id"),
+    dry_run: bool = typer.Option(False, "--dry-run"),
+) -> None:
+    """Run the full diagnose -> aggregate -> synthesize pipeline."""
+    if dry_run:
+        typer.echo(format_dry_run_summary(estimate_run(input_paths)))
+        return
+
+    result = run_pipeline(
+        input_paths=input_paths,
+        output_root=output_root,
+        run_id=run_id,
+        config=CodeMintConfig(),
+    )
+    typer.echo(format_run_summary(result.metadata))
 
 
 def main() -> None:
