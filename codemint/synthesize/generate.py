@@ -132,32 +132,66 @@ def _validate_response(raw: Any) -> GenerationResponse:
 
 
 def _require_evidence_grounding(key_trap: str, original_evidence: dict[str, str]) -> str:
-    evidence_text = " ".join(original_evidence.values()).lower()
-    key_trap_text = key_trap.lower()
-    evidence_tokens = {
-        token
-        for token in re.findall(r"[a-z0-9]{4,}", evidence_text)
-        if token
-        not in {
-            "that",
-            "with",
-            "from",
-            "when",
-            "used",
-            "line",
-            "test",
-            "check",
-            "after",
-            "each",
-            "segment",
-        }
-    }
-    if any(token in key_trap_text for token in evidence_tokens):
-        return key_trap
-    if "original evidence" in key_trap_text or "failed evidence" in key_trap_text:
+    if has_concrete_evidence_reference(key_trap, original_evidence):
         return key_trap
 
     raise ValueError("key_trap must reference original evidence")
+
+
+def has_concrete_evidence_reference(text: str, original_evidence: dict[str, str]) -> bool:
+    candidate_text = text.lower()
+    for evidence_value in original_evidence.values():
+        if _contains_concrete_reference(candidate_text, evidence_value):
+            return True
+    return False
+
+
+def _contains_concrete_reference(candidate_text: str, evidence_value: str) -> bool:
+    for quoted_span in re.findall(r"`([^`]+)`", evidence_value):
+        normalized = quoted_span.strip().lower()
+        if normalized and normalized in candidate_text:
+            return True
+
+    tokens = _normalized_tokens(evidence_value)
+    if len(tokens) < 2:
+        return False
+
+    overlap_count = sum(1 for token in tokens if token in candidate_text)
+    return overlap_count >= 2
+
+
+def _normalized_tokens(text: str) -> list[str]:
+    ignored = {
+        "that",
+        "with",
+        "from",
+        "when",
+        "used",
+        "line",
+        "test",
+        "check",
+        "after",
+        "each",
+        "segment",
+        "original",
+        "evidence",
+        "failed",
+        "task",
+        "reference",
+        "this",
+        "same",
+        "mistake",
+        "should",
+        "punish",
+        "into",
+        "through",
+        "before",
+    }
+    return [
+        token
+        for token in re.findall(r"[a-z0-9_\-]{3,}", text.lower())
+        if token not in ignored
+    ]
 
 
 def _algorithm_type_for_fault(fault_type: str) -> str:

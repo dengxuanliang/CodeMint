@@ -4,7 +4,8 @@ import json
 from pathlib import Path
 
 from codemint.config import CodeMintConfig
-from codemint.io.jsonl import append_jsonl
+from codemint.io.jsonl import append_jsonl, read_jsonl
+from codemint.models.diagnosis import DiagnosisRecord
 from codemint.models.spec import SpecRecord
 from codemint.models.weakness import WeaknessEntry, WeaknessReport
 from codemint.synthesize.allocation import allocate_specs, weakness_key
@@ -21,6 +22,7 @@ def run_synthesize(
     existing_specs: list[SpecRecord] | None = None,
     invoke_model=None,
     feasibility_check=None,
+    diagnoses: list[DiagnosisRecord] | None = None,
     original_evidence: dict[str, dict[str, str]] | None = None,
 ) -> list[SpecRecord]:
     resolved_config = config or CodeMintConfig()
@@ -29,6 +31,7 @@ def run_synthesize(
     generated: list[SpecRecord] = []
     prior_specs = list(existing_specs or [])
     model_invoke = invoke_model or default_invoke_model
+    evidence_map = original_evidence or build_original_evidence_map(report, diagnoses or [])
 
     for weakness in sorted(report.weaknesses, key=lambda item: item.rank)[: synthesize_config.top_n]:
         key = weakness_key(weakness)
@@ -47,7 +50,7 @@ def run_synthesize(
                 difficulty=_difficulty_for_slot(slot_index - 1, count, synthesize_config.difficulty_distribution),
                 invoke_model=model_invoke,
                 feasibility_check=feasibility_check,
-                original_evidence=_evidence_for_weakness(weakness, original_evidence),
+                original_evidence=_evidence_for_weakness(weakness, evidence_map),
                 overlap_threshold=synthesize_config.diversity_overlap_threshold,
                 existing_specs=prior_specs + generated,
                 max_attempts=synthesize_config.max_regeneration_attempts + 1,
@@ -101,6 +104,31 @@ def read_weakness_report(path: Path) -> WeaknessReport:
     return WeaknessReport.model_validate(json.loads(path.read_text(encoding="utf-8")))
 
 
+def read_diagnoses(path: Path) -> list[DiagnosisRecord]:
+    if not path.exists():
+        return []
+    return [DiagnosisRecord.model_validate(row) for row in read_jsonl(path)]
+
+
+def build_original_evidence_map(
+    report: WeaknessReport,
+    diagnoses: list[DiagnosisRecord],
+) -> dict[str, dict[str, str]]:
+    grouped: dict[str, list[DiagnosisRecord]] = {}
+    for diagnosis in diagnoses:
+        for sub_tag in diagnosis.sub_tags:
+            grouped.setdefault(sub_tag, []).append(diagnosis)
+
+    evidence_map: dict[str, dict[str, str]] = {}
+    for weakness in report.weaknesses:
+        key = weakness_key(weakness)
+        matches = grouped.get(key, [])
+        if matches:
+            evidence_map[key] = _merge_evidence(matches[:3])
+
+    return evidence_map
+
+
 def _difficulty_for_slot(slot_index: int, count: int, distribution: str) -> str:
     if distribution == "weighted_hard":
         return "medium" if slot_index % 3 == 1 else "hard"
@@ -119,4 +147,24 @@ def _evidence_for_weakness(
         "wrong_line": weakness.collective_diagnosis.refined_root_cause,
         "correct_approach": weakness.collective_diagnosis.capability_cliff,
         "failed_test": f"Reproduce failure around {key}",
+    }
+
+
+def _merge_evidence(diagnoses: list[DiagnosisRecord]) -> dict[str, str]:
+    wrong_lines: list[str] = []
+    correct_approaches: list[str] = []
+    failed_tests: list[str] = []
+
+    for diagnosis in diagnoses:
+        if diagnosis.evidence.wrong_line not in wrong_lines:
+            wrong_lines.append(diagnosis.evidence.wrong_line)
+        if diagnosis.evidence.correct_approach not in correct_approaches:
+            correct_approaches.append(diagnosis.evidence.correct_approach)
+        if diagnosis.evidence.failed_test not in failed_tests:
+            failed_tests.append(diagnosis.evidence.failed_test)
+
+    return {
+        "wrong_line": " | ".join(wrong_lines),
+        "correct_approach": " | ".join(correct_approaches),
+        "failed_test": " | ".join(failed_tests),
     }

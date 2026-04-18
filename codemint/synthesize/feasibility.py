@@ -5,6 +5,7 @@ from typing import Any
 
 from codemint.models.spec import SpecRecord
 from codemint.prompts.registry import load_prompt
+from codemint.synthesize.generate import has_concrete_evidence_reference
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,10 +21,7 @@ def check_feasibility(
     feasibility_check=None,
 ) -> FeasibilityResult:
     prompt = load_prompt("synthesize_feasibility_check")
-    evidence_text = " ".join(original_evidence.values()).lower()
-    key_trap = spec.problem_spec.key_trap.lower()
-
-    if not any(token in key_trap for token in evidence_text.split()):
+    if not has_concrete_evidence_reference(spec.problem_spec.key_trap, original_evidence):
         return FeasibilityResult(
             accepted=False,
             reason="Generated key_trap no longer references original evidence.",

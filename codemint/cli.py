@@ -12,7 +12,7 @@ from codemint.logging import format_dry_run_summary, format_run_summary
 from codemint.models.diagnosis import DiagnosisRecord
 from codemint.run.dry_run import estimate_run
 from codemint.run.pipeline import run_pipeline
-from codemint.synthesize.pipeline import read_weakness_report, run_synthesize
+from codemint.synthesize.pipeline import read_diagnoses, read_weakness_report, run_synthesize
 
 
 app = typer.Typer(no_args_is_help=True)
@@ -61,7 +61,8 @@ def synthesize(
     run_dir = ensure_run_directory(output_root, run_id)
     artifacts = artifact_paths_for_run(run_dir)
     report = read_weakness_report(artifacts["weaknesses"])
-    specs = run_synthesize(report, artifacts["specs"])
+    diagnoses = read_diagnoses(artifacts["diagnoses"])
+    specs = run_synthesize(report, artifacts["specs"], diagnoses=diagnoses)
     typer.echo(f"Wrote {len(specs)} synthesized specs to {artifacts['specs']}")
 
 
