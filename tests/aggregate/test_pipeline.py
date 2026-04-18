@@ -42,6 +42,23 @@ def test_run_aggregate_repairs_clusters_and_writes_report(tmp_path: Path) -> Non
     assert '"frequency":2' in written
 
 
+def test_run_aggregate_default_path_applies_verification_metadata(tmp_path: Path) -> None:
+    from codemint.aggregate.pipeline import run_aggregate
+
+    output_path = tmp_path / "weaknesses.json"
+    diagnoses = [_diagnosis(9, "implementation", ["off_by_one"])]
+
+    report = run_aggregate(diagnoses, output_path)
+
+    assert report.weaknesses[0].frequency == 1
+    assert output_path.exists()
+    assert "verification_status=passed" in report.weaknesses[0].collective_diagnosis.refined_root_cause
+    assert "verification_level=self_check" in report.weaknesses[0].collective_diagnosis.refined_root_cause
+    written = output_path.read_text(encoding="utf-8")
+    assert "verification_status=passed" in written
+    assert "verification_level=self_check" in written
+
+
 def test_aggregate_command_reads_diagnoses_and_writes_report(tmp_path: Path) -> None:
     run_dir = tmp_path / "artifacts" / "demo-run"
     run_dir.mkdir(parents=True)
@@ -71,6 +88,9 @@ def test_aggregate_command_reads_diagnoses_and_writes_report(tmp_path: Path) -> 
     assert result.exit_code == 0, result.stdout
     assert (run_dir / "weaknesses.json").exists()
     assert "Wrote weakness report" in result.stdout
+    written = (run_dir / "weaknesses.json").read_text(encoding="utf-8")
+    assert "verification_status=passed" in written
+    assert "verification_level=self_check" in written
 
 
 def _diagnosis(

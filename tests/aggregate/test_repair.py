@@ -39,6 +39,42 @@ def test_verification_level_auto_prefers_exec_api_when_reachable() -> None:
     assert calls == ["probe", "exec:1"]
 
 
+def test_verification_level_auto_degrades_when_earlier_paths_are_unavailable() -> None:
+    from codemint.aggregate.repair import verify_repair
+
+    diagnosis = _diagnosis(3)
+    calls: list[str] = []
+
+    def exec_probe() -> bool:
+        calls.append("probe")
+        return True
+
+    def exec_verifier(record: DiagnosisRecord) -> str | None:
+        calls.append(f"exec:{record.task_id}")
+        return None
+
+    def cross_verifier(record: DiagnosisRecord) -> str | None:
+        calls.append(f"cross:{record.task_id}")
+        return None
+
+    def self_verifier(record: DiagnosisRecord) -> str:
+        calls.append(f"self:{record.task_id}")
+        return "passed"
+
+    result = verify_repair(
+        diagnosis,
+        verification_level="auto",
+        exec_api_reachable=exec_probe,
+        exec_api_verifier=exec_verifier,
+        cross_model_verifier=cross_verifier,
+        self_check_verifier=self_verifier,
+    )
+
+    assert result.level == "self_check"
+    assert result.status == "passed"
+    assert calls == ["probe", "exec:3", "cross:3", "self:3"]
+
+
 def test_second_verification_failure_forces_unverified_and_caps_confidence() -> None:
     from codemint.aggregate.repair import repair_diagnosis
 
@@ -73,6 +109,19 @@ def test_second_verification_failure_forces_unverified_and_caps_confidence() -> 
         "rediagnose:7",
         "verify:7:self_check",
     ]
+
+
+def test_repair_diagnosis_uses_default_degrading_verifier_when_none_is_injected() -> None:
+    from codemint.aggregate.repair import repair_diagnosis
+
+    repaired = repair_diagnosis(
+        _diagnosis(8),
+        verification_level="auto",
+        rediagnose=lambda diagnosis: diagnosis.model_copy(deep=True),
+    )
+
+    assert repaired.enriched_labels["verification_level"] == "self_check"
+    assert repaired.enriched_labels["verification_status"] == "passed"
 
 
 def _diagnosis(task_id: int, *, confidence: float = 0.9) -> DiagnosisRecord:
