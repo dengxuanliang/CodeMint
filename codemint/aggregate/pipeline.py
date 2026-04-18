@@ -5,6 +5,13 @@ from collections.abc import Callable
 from pathlib import Path
 
 from codemint.aggregate.cluster import cluster_diagnoses
+from codemint.aggregate.causal import CausalAnalyzer, build_causal_chains
+from codemint.aggregate.collective import (
+    CollectiveAnalyzer,
+    CollectiveCluster,
+    apply_collective_diagnosis,
+)
+from codemint.aggregate.rank import build_rankings
 from codemint.aggregate.repair import (
     VerificationLevel,
     VerificationResult,
@@ -28,6 +35,8 @@ def run_aggregate(
     verification_level: VerificationLevel = "auto",
     verify: Callable[[DiagnosisRecord, VerificationLevel], dict | VerificationResult] | None = None,
     rediagnose: Callable[[DiagnosisRecord], DiagnosisRecord] | None = None,
+    collective_analyze: CollectiveAnalyzer | None = None,
+    causal_analyze: CausalAnalyzer | None = None,
 ) -> WeaknessReport:
     verifier = verify or default_verify
     rediagnoser = rediagnose or _identity
@@ -41,27 +50,22 @@ def run_aggregate(
         for diagnosis in diagnoses
     ]
     clusters = cluster_diagnoses(repaired)
-    report = _build_report(clusters, repaired)
+    collective_clusters, tag_mappings = apply_collective_diagnosis(clusters, collective_analyze)
+    normalized = _apply_collective_adjustments(repaired, collective_clusters, tag_mappings)
+    final_clusters = cluster_diagnoses(normalized)
+    report = _build_report(final_clusters, collective_clusters, tag_mappings, causal_analyze)
     _write_report(output_path, report)
     return report
 
 
-def _build_report(clusters, repaired: list[DiagnosisRecord]) -> WeaknessReport:
+def _build_report(
+    clusters,
+    collective_clusters: list[CollectiveCluster],
+    tag_mappings: dict[str, str],
+    causal_analyze: CausalAnalyzer | None,
+) -> WeaknessReport:
     weaknesses: list[WeaknessEntry] = []
-    verification_levels = sorted(
-        {
-            diagnosis.enriched_labels.get("verification_level")
-            for diagnosis in repaired
-            if diagnosis.enriched_labels.get("verification_level")
-        }
-    )
-    verification_statuses = sorted(
-        {
-            diagnosis.enriched_labels.get("verification_status")
-            for diagnosis in repaired
-            if diagnosis.enriched_labels.get("verification_status")
-        }
-    )
+    collective_by_key = {cluster.key: cluster.collective_diagnosis for cluster in collective_clusters}
     for index, cluster in enumerate(clusters, start=1):
         weaknesses.append(
             WeaknessEntry(
@@ -70,43 +74,16 @@ def _build_report(clusters, repaired: list[DiagnosisRecord]) -> WeaknessReport:
                 sub_tags=cluster.sub_tags,
                 frequency=len(cluster.diagnoses),
                 sample_task_ids=cluster.task_ids[:3],
-                trainability=1.0,
-                collective_diagnosis=CollectiveDiagnosis(
-                    refined_root_cause=(
-                        f"Grouped by {cluster.fault_type}/{cluster.sub_tags[0]} "
-                        f"(verification_status={','.join(verification_statuses) or 'unknown'}; "
-                        f"verification_level={','.join(verification_levels) or 'unknown'})"
-                    ),
-                    capability_cliff="pending_task_9",
-                    misdiagnosed_ids=[],
-                    misdiagnosis_corrections={},
-                    cluster_coherence=1.0,
-                ),
+                trainability=_trainability_for_fault_type(cluster.fault_type),
+                collective_diagnosis=collective_by_key.get(cluster.key)
+                or _default_collective_diagnosis(cluster),
             )
         )
 
-    ranks = [entry.rank for entry in weaknesses]
-    tag_mappings = {
-        entry.sub_tags[0]: entry.sub_tags[0]
-        for entry in weaknesses
-        if entry.sub_tags
-    }
     return WeaknessReport(
         weaknesses=weaknesses,
-        rankings=RankingSet(
-            by_frequency=ranks,
-            by_difficulty=ranks,
-            by_trainability=ranks,
-        ),
-        causal_chains=[
-            CausalChain(
-                root="pending_task_9",
-                downstream=[entry.sub_tags[0] for entry in weaknesses if entry.sub_tags],
-                training_priority="pending_task_9",
-            )
-        ]
-        if weaknesses
-        else [],
+        rankings=build_rankings(weaknesses),
+        causal_chains=build_causal_chains(weaknesses, causal_analyze),
         tag_mappings=tag_mappings,
     )
 
@@ -121,3 +98,94 @@ def _write_report(output_path: Path, report: WeaknessReport) -> None:
 
 def _identity(diagnosis: DiagnosisRecord) -> DiagnosisRecord:
     return diagnosis.model_copy(deep=True)
+
+
+def _apply_collective_adjustments(
+    diagnoses: list[DiagnosisRecord],
+    collective_clusters: list[CollectiveCluster],
+    tag_mappings: dict[str, str],
+) -> list[DiagnosisRecord]:
+    reclassifications = _build_reclassifications(collective_clusters)
+    adjusted: list[DiagnosisRecord] = []
+
+    for diagnosis in diagnoses:
+        current = diagnosis.model_copy(deep=True)
+        current.sub_tags = _normalize_sub_tags(current.sub_tags, tag_mappings)
+
+        correction = reclassifications.get(current.task_id)
+        if correction is not None:
+            current.fault_type = correction[0]
+            current.sub_tags = [correction[1]]
+
+        adjusted.append(current)
+
+    return adjusted
+
+
+def _build_reclassifications(
+    collective_clusters: list[CollectiveCluster],
+) -> dict[int, tuple[str, str]]:
+    reclassifications: dict[int, tuple[str, str]] = {}
+    for cluster in collective_clusters:
+        for task_id_text, correction in cluster.collective_diagnosis.misdiagnosis_corrections.items():
+            parsed = _parse_correction(correction)
+            if parsed is None:
+                continue
+            reclassifications[int(task_id_text)] = parsed
+    return reclassifications
+
+
+def _parse_correction(value: str) -> tuple[str, str] | None:
+    fault_type, separator, sub_tag = value.partition(":")
+    if not separator or not sub_tag:
+        return None
+    return fault_type, sub_tag
+
+
+def _normalize_sub_tags(sub_tags: list[str], tag_mappings: dict[str, str]) -> list[str]:
+    normalized: list[str] = []
+    for tag in sub_tags:
+        mapped = tag_mappings.get(tag, tag)
+        if mapped not in normalized:
+            normalized.append(mapped)
+    return normalized or ["unknown"]
+
+
+def _default_collective_diagnosis(cluster) -> CollectiveDiagnosis:
+    verification_levels = sorted(
+        {
+            diagnosis.enriched_labels.get("verification_level")
+            for diagnosis in cluster.diagnoses
+            if diagnosis.enriched_labels.get("verification_level")
+        }
+    )
+    verification_statuses = sorted(
+        {
+            diagnosis.enriched_labels.get("verification_status")
+            for diagnosis in cluster.diagnoses
+            if diagnosis.enriched_labels.get("verification_status")
+        }
+    )
+    primary_tag = cluster.sub_tags[0] if cluster.sub_tags else "unknown"
+    return CollectiveDiagnosis(
+        refined_root_cause=(
+            f"Grouped by {cluster.fault_type}/{primary_tag} "
+            f"(verification_status={','.join(verification_statuses) or 'unknown'}; "
+            f"verification_level={','.join(verification_levels) or 'unknown'})"
+        ),
+        capability_cliff=f"{primary_tag} emerges after collective reclassification.",
+        misdiagnosed_ids=[],
+        misdiagnosis_corrections={},
+        cluster_coherence=1.0,
+    )
+
+
+def _trainability_for_fault_type(fault_type: str) -> float:
+    trainability_by_fault_type = {
+        "modeling": 0.9,
+        "comprehension": 0.75,
+        "implementation": 0.6,
+        "edge_handling": 0.5,
+        "surface": 0.3,
+    }
+    return trainability_by_fault_type.get(fault_type, 0.5)
