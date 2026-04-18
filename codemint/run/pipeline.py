@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -51,6 +52,7 @@ def run_pipeline(
     stages_executed: list[str] = []
     forced_stages = set(_selected_stages(start_from))
     rerun_downstream = False
+    existing_specs: list[SpecRecord] = []
 
     diagnoses: list[DiagnosisRecord]
     if "diagnose" in forced_stages and _should_run_diagnose(artifacts["diagnoses"], len(tasks)):
@@ -74,7 +76,18 @@ def run_pipeline(
         rerun_downstream or start_from == "synthesize" or not artifacts["specs"].exists()
     )
     if should_run_synthesize:
-        specs = (run_synthesize_stage or run_synthesize)(report, artifacts["specs"])
+        if artifacts["specs"].exists():
+            existing_specs = _read_specs(artifacts["specs"])
+        if run_synthesize_stage is not None:
+            specs = run_synthesize_stage(report, artifacts["specs"])
+        else:
+            specs = run_synthesize(
+                report,
+                artifacts["specs"],
+                config=resolved_config,
+                diagnoses=diagnoses if "diagnose" in stages_executed else None,
+                existing_specs=existing_specs,
+            )
         stages_executed.append("synthesize")
     else:
         specs = _read_specs(artifacts["specs"])
@@ -88,9 +101,13 @@ def run_pipeline(
         input_files=[str(path) for path in input_paths],
         input_count=len(tasks),
         stages_executed=stages_executed,
-        summary=_build_summary(diagnoses, report, specs),
+        summary=_build_summary(diagnoses, report, specs, errors_path=run_dir / "errors.jsonl"),
     )
-    artifacts["run_metadata"].write_text(metadata.model_dump_json(indent=2), encoding="utf-8")
+    _write_run_metadata(
+        artifacts["run_metadata"],
+        metadata,
+        self_analysis_warning=_same_model_warning(resolved_config),
+    )
     return RunPipelineResult(run_dir=run_dir, stages_executed=stages_executed, metadata=metadata)
 
 
@@ -120,12 +137,14 @@ def _build_summary(
     diagnoses: list[DiagnosisRecord],
     report: WeaknessReport,
     specs: list[SpecRecord],
+    *,
+    errors_path: Path,
 ) -> RunSummary:
     return RunSummary(
         diagnosed=len(diagnoses),
         rule_screened=sum(1 for diagnosis in diagnoses if diagnosis.diagnosis_source != "model_deep"),
         model_analyzed=sum(1 for diagnosis in diagnoses if diagnosis.diagnosis_source == "model_deep"),
-        errors=0,
+        errors=_error_count(errors_path),
         weaknesses_found=len(report.weaknesses),
         specs_generated=len(specs),
     )
@@ -134,3 +153,26 @@ def _build_summary(
 def _selected_stages(start_from: RunStage) -> tuple[RunStage, ...]:
     ordered: tuple[RunStage, ...] = ("diagnose", "aggregate", "synthesize")
     return ordered[ordered.index(start_from) :]
+
+
+def _error_count(path: Path) -> int:
+    if not path.exists():
+        return 0
+    return len(read_jsonl(path))
+
+
+def _same_model_warning(config: CodeMintConfig) -> bool:
+    analysis_model = config.model.analysis_model
+    evaluated_model = config.model.evaluated_model
+    return bool(analysis_model and evaluated_model and analysis_model == evaluated_model)
+
+
+def _write_run_metadata(
+    path: Path,
+    metadata: RunMetadata,
+    *,
+    self_analysis_warning: bool,
+) -> None:
+    payload = metadata.model_dump(mode="json")
+    payload["self_analysis_warning"] = self_analysis_warning
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

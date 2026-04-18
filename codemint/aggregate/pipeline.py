@@ -4,13 +4,18 @@ import json
 from collections.abc import Callable
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from codemint.aggregate.cluster import cluster_diagnoses
 from codemint.aggregate.causal import CausalAnalyzer, build_causal_chains
 from codemint.aggregate.collective import (
+    CollectiveAnalysisResult,
     CollectiveAnalyzer,
     CollectiveCluster,
     apply_collective_diagnosis,
+    default_collective_analyze,
 )
+from codemint.io.jsonl import append_jsonl
 from codemint.aggregate.rank import build_rankings
 from codemint.aggregate.repair import (
     VerificationLevel,
@@ -50,7 +55,13 @@ def run_aggregate(
         for diagnosis in diagnoses
     ]
     clusters = cluster_diagnoses(repaired)
-    collective_clusters, tag_mappings = apply_collective_diagnosis(clusters, collective_analyze)
+    collective_clusters, tag_mappings = apply_collective_diagnosis(
+        clusters,
+        _build_resilient_collective_analyzer(
+            output_path=output_path,
+            analyze=collective_analyze,
+        ),
+    )
     normalized = _apply_collective_adjustments(repaired, collective_clusters, tag_mappings)
     final_clusters = cluster_diagnoses(normalized)
     report = _build_report(final_clusters, collective_clusters, tag_mappings, causal_analyze)
@@ -209,3 +220,70 @@ def _trainability_for_fault_type(fault_type: str) -> float:
         "surface": 0.3,
     }
     return trainability_by_fault_type.get(fault_type, 0.5)
+
+
+def _build_resilient_collective_analyzer(
+    *,
+    output_path: Path,
+    analyze: CollectiveAnalyzer | None,
+) -> CollectiveAnalyzer:
+    analyzer = analyze or default_collective_analyze
+    cache: dict[str, dict] = {}
+
+    def resilient(payload: dict) -> dict:
+        cache_key = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        if cache_key in cache:
+            return cache[cache_key]
+
+        last_error: ValidationError | None = None
+        for attempt in range(1, 3):
+            candidate = analyzer(payload)
+            try:
+                parsed = CollectiveAnalysisResult.model_validate(candidate)
+            except ValidationError as error:
+                last_error = error
+                if attempt == 2:
+                    fallback = default_collective_analyze(payload)
+                    _log_collective_parse_failure(
+                        errors_path=output_path.parent / "errors.jsonl",
+                        payload=payload,
+                        attempts=attempt,
+                        error=error,
+                    )
+                    cache[cache_key] = fallback
+                    return fallback
+                continue
+
+            normalized = parsed.model_dump(mode="json")
+            cache[cache_key] = normalized
+            return normalized
+
+        assert last_error is not None
+        raise last_error
+
+    return resilient
+
+
+def _log_collective_parse_failure(
+    *,
+    errors_path: Path,
+    payload: dict,
+    attempts: int,
+    error: ValidationError,
+) -> None:
+    append_jsonl(
+        errors_path,
+        [
+            {
+                "stage": "aggregate",
+                "error_type": "collective_parse_failure",
+                "attempts": attempts,
+                "cluster": {
+                    "fault_type": payload["cluster"]["fault_type"],
+                    "sub_tags": payload["cluster"]["sub_tags"],
+                    "task_ids": payload["cluster"]["task_ids"],
+                },
+                "message": str(error),
+            }
+        ],
+    )
