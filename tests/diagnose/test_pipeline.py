@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from codemint.config import CodeMintConfig
 from codemint.diagnose.pipeline import run_diagnose
 from codemint.io.jsonl import read_jsonl
 from codemint.models.diagnosis import DiagnosisEvidence, DiagnosisRecord
@@ -242,6 +243,218 @@ def test_run_diagnose_keeps_missing_code_block_as_failure(tmp_path: Path) -> Non
     assert diagnosis.sub_tags == ["missing_code_block"]
     assert diagnosis.diagnosis_source == "model_deep"
     assert diagnosis.is_failure is True
+
+
+def test_run_diagnose_uses_model_backed_deep_analyzer_when_configured(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    task = _task(15, "The answer explains the fix but does not return code.")
+    output_path = tmp_path / "diagnoses.jsonl"
+    requests: list[str] = []
+
+    class StubClient:
+        def __init__(self, config):
+            self.config = config
+
+        def complete(self, system_prompt: str, user_prompt: str) -> str:
+            requests.append(user_prompt)
+            return """```json
+            {
+              "task_id": 15,
+              "fault_type": "implementation",
+              "sub_tags": ["missing_code_block"],
+              "severity": "high",
+              "description": "The completion explains the intended fix without returning executable code.",
+              "evidence": {
+                "wrong_line": "I would solve this by defining solve(x), but the final code block is missing.",
+                "correct_approach": "Return executable solve(x) code directly.",
+                "failed_test": "assert solve(1) == 2"
+              },
+              "enriched_labels": {
+                "reasoning_mode": "structured"
+              },
+              "confidence": 0.88,
+              "diagnosis_source": "model_deep",
+              "prompt_version": "v1"
+            }
+            ```"""
+
+    monkeypatch.setattr("codemint.diagnose.pipeline.ModelClient", StubClient)
+
+    diagnoses = run_diagnose(
+        [task],
+        output_path,
+        rules=[],
+        config=CodeMintConfig.model_validate(
+            {
+                "model": {
+                    "base_url": "https://example.test",
+                    "api_key": "secret",
+                    "analysis_model": "gpt-test",
+                }
+            }
+        ),
+    )
+
+    diagnosis = diagnoses[0]
+    assert requests
+    assert diagnosis.sub_tags == ["missing_code_block"]
+    assert diagnosis.severity == "high"
+    assert diagnosis.description.startswith("The completion explains")
+    assert diagnosis.evidence.correct_approach == "Return executable solve(x) code directly."
+    assert diagnosis.enriched_labels["reasoning_mode"] == "structured"
+    assert diagnosis.prompt_version == "v1"
+
+
+def test_run_diagnose_retries_after_invalid_model_output(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    task = _task(16, "The answer uses solve_value instead of solve.")
+    output_path = tmp_path / "diagnoses.jsonl"
+    prompts: list[str] = []
+
+    class StubClient:
+        def __init__(self, config):
+            self.config = config
+            self.calls = 0
+
+        def complete(self, system_prompt: str, user_prompt: str) -> str:
+            prompts.append(user_prompt)
+            self.calls += 1
+            if self.calls == 1:
+                return '{"task_id":16,"fault_type":"implementation","sub_tags":["function_name_mismatch"]}'
+            return """{
+              "task_id": 16,
+              "fault_type": "implementation",
+              "sub_tags": ["function_name_mismatch"],
+              "severity": "medium",
+              "description": "The public entry point name does not match the harness contract.",
+              "evidence": {
+                "wrong_line": "def solve_value(x):",
+                "correct_approach": "Define the exact solve(x) entry point.",
+                "failed_test": "NameError: name 'solve' is not defined"
+              },
+              "enriched_labels": {},
+              "confidence": 0.83,
+              "diagnosis_source": "model_deep",
+              "prompt_version": "v1"
+            }"""
+
+    monkeypatch.setattr("codemint.diagnose.pipeline.ModelClient", StubClient)
+
+    diagnoses = run_diagnose(
+        [task],
+        output_path,
+        rules=[],
+        config=CodeMintConfig.model_validate(
+            {
+                "model": {
+                    "base_url": "https://example.test",
+                    "api_key": "secret",
+                    "analysis_model": "gpt-test",
+                }
+            }
+        ),
+    )
+
+    assert diagnoses[0].sub_tags == ["function_name_mismatch"]
+    assert len(prompts) == 2
+    assert "Format correction" in prompts[1]
+
+
+def test_run_diagnose_rejects_non_taxonomy_primary_tag_and_retries(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    task = _task(17, "```python\ndef solve(x)\n    return x * 2\n```")
+    output_path = tmp_path / "diagnoses.jsonl"
+    prompts: list[str] = []
+
+    class StubClient:
+        def __init__(self, config):
+            self.config = config
+            self.calls = 0
+
+        def complete(self, system_prompt: str, user_prompt: str) -> str:
+            prompts.append(user_prompt)
+            self.calls += 1
+            if self.calls == 1:
+                return """{
+                  "task_id": 17,
+                  "fault_type": "implementation",
+                  "sub_tags": ["missing_colon"],
+                  "severity": "high",
+                  "description": "The function definition is malformed.",
+                  "evidence": {
+                    "wrong_line": "def solve(x)",
+                    "correct_approach": "Add the missing colon.",
+                    "failed_test": "SyntaxError: invalid syntax"
+                  },
+                  "enriched_labels": {"flags": "missing_colon"},
+                  "confidence": 0.91,
+                  "diagnosis_source": "model_deep",
+                  "prompt_version": "v1"
+                }"""
+            return """{
+              "task_id": 17,
+              "fault_type": "surface",
+              "sub_tags": ["markdown_formatting", "syntax_error"],
+              "severity": "high",
+              "description": "Markdown fences and malformed syntax break execution.",
+              "evidence": {
+                "wrong_line": "```python\ndef solve(x)\n    return x * 2\n```",
+                "correct_approach": "Return raw executable Python code with a valid function definition.",
+                "failed_test": "SyntaxError: invalid syntax"
+              },
+              "enriched_labels": {"flags": "missing_colon"},
+              "confidence": 0.93,
+              "diagnosis_source": "model_deep",
+              "prompt_version": "v1"
+            }"""
+
+    monkeypatch.setattr("codemint.diagnose.pipeline.ModelClient", StubClient)
+
+    diagnoses = run_diagnose(
+        [task],
+        output_path,
+        rules=[],
+        config=CodeMintConfig.model_validate(
+            {
+                "model": {
+                    "base_url": "https://example.test",
+                    "api_key": "secret",
+                    "analysis_model": "gpt-test",
+                }
+            }
+        ),
+    )
+
+    assert diagnoses[0].sub_tags[0] in {"syntax_error", "markdown_formatting"}
+    assert "missing_colon" not in diagnoses[0].sub_tags
+    assert len(prompts) >= 1
+    if len(prompts) > 1:
+        assert "allowed taxonomy" in prompts[1].lower()
+
+
+def test_run_diagnose_maps_noncanonical_secondary_tags_back_to_allowed_taxonomy(tmp_path: Path) -> None:
+    task = _task(18, "Completion")
+    output_path = tmp_path / "diagnoses.jsonl"
+
+    diagnoses = run_diagnose(
+        [task],
+        output_path,
+        rules=[],
+        deep_analyzer=lambda _: _diagnosis(
+            task.task_id,
+            diagnosis_source="model_deep",
+            fault_type="surface",
+            sub_tags=["missing_code", "missing_colon", "markdown_code_fence"],
+        ),
+    )
+
+    assert diagnoses[0].sub_tags == ["missing_code_block", "syntax_error", "markdown_formatting"]
 
 
 @pytest.mark.parametrize("sub_tags", [["correct_output"], ["correct_execution"], ["correct_solution"], ["pass"]])

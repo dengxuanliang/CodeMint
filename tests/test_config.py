@@ -92,3 +92,17 @@ def test_load_config_rejects_invalid_difficulty_distribution(tmp_path: Path) -> 
 
     with pytest.raises(ValueError, match="difficulty_distribution"):
         load_config(path)
+
+
+def test_load_config_parses_prompt_override_directory(tmp_path: Path) -> None:
+    prompt_dir = tmp_path / "custom-prompts"
+    prompt_dir.mkdir()
+    path = tmp_path / "codemint.yaml"
+    path.write_text(
+        f'prompts:\n  override_dir: "{prompt_dir}"\n',
+        encoding="utf-8",
+    )
+
+    config = load_config(path)
+
+    assert config.prompts.override_dir == prompt_dir

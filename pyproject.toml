@@ -16,6 +16,20 @@ codemint = "codemint.cli:main"
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["codemint*"]
+
+[tool.setuptools.package-data]
+codemint = []
+
+[tool.setuptools.data-files]
+"prompts" = [
+    "prompts/*.txt",
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]

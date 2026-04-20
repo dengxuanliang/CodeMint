@@ -33,7 +33,7 @@ class ModelClient:
         for attempt in range(1, self._config.max_retries + 1):
             try:
                 response = self._client.post(
-                    f"{self._config.base_url.rstrip('/')}/chat/completions",
+                    _completion_url(self._config.base_url),
                     json=self._build_payload(system_prompt, user_prompt),
                     headers=self._build_headers(),
                 )
@@ -83,3 +83,10 @@ def _is_retryable_error(error: httpx.HTTPError) -> bool:
         status_code = error.response.status_code
         return status_code == 429 or status_code >= 500
     return False
+
+
+def _completion_url(base_url: str) -> str:
+    normalized = base_url.rstrip("/")
+    if normalized.endswith("/chat/completions"):
+        return normalized
+    return f"{normalized}/chat/completions"

@@ -71,6 +71,33 @@ def test_diagnosis_round_trip() -> None:
     assert DiagnosisRecord.model_validate_json(diagnosis.model_dump_json()) == diagnosis
 
 
+def test_diagnosis_accepts_non_failure_source_and_property() -> None:
+    diagnosis = DiagnosisRecord.model_validate(
+        {
+            "task_id": 202,
+            "fault_type": "implementation",
+            "sub_tags": ["correct_output"],
+            "severity": "low",
+            "description": "The solution is correct.",
+            "evidence": {
+                "wrong_line": "N/A",
+                "correct_approach": "Already correct.",
+                "failed_test": "N/A",
+            },
+            "enriched_labels": {
+                "status": "correct_solution",
+                "test_result": "pass",
+            },
+            "confidence": 0.99,
+            "diagnosis_source": "non_failure",
+            "prompt_version": "v2",
+        }
+    )
+
+    assert diagnosis.diagnosis_source == "non_failure"
+    assert diagnosis.is_failure is False
+
+
 def test_diagnosis_rejects_unknown_fields() -> None:
     with pytest.raises(ValueError, match="unexpected"):
         DiagnosisRecord.model_validate(
@@ -378,13 +405,24 @@ def test_run_metadata_round_trip() -> None:
             "input_files": ["eval_log.jsonl"],
             "input_count": 1000,
             "stages_executed": ["diagnose", "aggregate", "synthesize"],
+            "self_analysis_warning": False,
             "summary": {
                 "diagnosed": 1000,
                 "rule_screened": 200,
                 "model_analyzed": 800,
+                "non_failures": 0,
                 "errors": 3,
+                "skipped": 0,
+                "elapsed_seconds": 12.5,
                 "weaknesses_found": 12,
                 "specs_generated": 36,
+                "synthesize_failures": 2,
+                "specs_by_weakness": {"state_tracking": 24, "off_by_one": 12},
+                "synthesize_status": "success",
+                "attempted_weaknesses": ["state_tracking", "off_by_one"],
+                "covered_weaknesses": ["state_tracking", "off_by_one"],
+                "weaknesses_without_specs": [],
+                "synthesize_failure_reasons_by_weakness": {},
             },
         }
     )
@@ -413,9 +451,16 @@ def test_run_metadata_rejects_unknown_fields() -> None:
                     "diagnosed": 1000,
                     "rule_screened": 200,
                     "model_analyzed": 800,
+                    "non_failures": 0,
                     "errors": 3,
+                    "skipped": 0,
+                    "elapsed_seconds": 12.5,
                     "weaknesses_found": 12,
                     "specs_generated": 36,
+                    "synthesize_failures": 2,
+                    "specs_by_weakness": {"state_tracking": 24, "off_by_one": 12},
+                    "synthesize_status": "success",
+                    "weaknesses_without_specs": [],
                 },
             }
         )

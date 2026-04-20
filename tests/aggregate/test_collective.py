@@ -347,6 +347,111 @@ def test_reclassified_tag_is_renormalized_to_canonical_mapping(tmp_path: Path) -
     assert report.tag_mappings["index_bounds"] == "off_by_one"
 
 
+def test_collective_diagnosis_does_not_merge_function_name_mismatch() -> None:
+    from codemint.aggregate.collective import apply_collective_diagnosis
+    from codemint.aggregate.cluster import cluster_diagnoses
+
+    diagnoses = [
+        _diagnosis(41, "surface", ["function_name_mismatch"]),
+        _diagnosis(42, "surface", ["wrong_function_name"]),
+    ]
+
+    def collective_stub(payload: dict) -> dict:
+        return {
+            "refined_root_cause": "Interface contract issue.",
+            "capability_cliff": "Public entry point becomes unstable.",
+            "misdiagnosed_ids": [],
+            "misdiagnosis_corrections": {},
+            "cluster_coherence": 0.85,
+            "semantic_merges": [
+                {
+                    "source_tag": "wrong_function_name",
+                    "target_tag": "function_name_mismatch",
+                    "confirmed": True,
+                }
+            ],
+        }
+
+    enriched_clusters, tag_mappings = apply_collective_diagnosis(
+        cluster_diagnoses(diagnoses),
+        collective_stub,
+    )
+
+    assert [cluster.sub_tags for cluster in enriched_clusters] == [["function_name_mismatch"], ["wrong_function_name"]]
+    assert tag_mappings["function_name_mismatch"] == "function_name_mismatch"
+    assert tag_mappings["wrong_function_name"] == "wrong_function_name"
+
+
+def test_collective_diagnosis_does_not_merge_markdown_formatting() -> None:
+    from codemint.aggregate.collective import apply_collective_diagnosis
+    from codemint.aggregate.cluster import cluster_diagnoses
+
+    diagnoses = [
+        _diagnosis(51, "surface", ["markdown_formatting"]),
+        _diagnosis(52, "surface", ["extraneous_characters"]),
+    ]
+
+    def collective_stub(payload: dict) -> dict:
+        return {
+            "refined_root_cause": "Formatting issue.",
+            "capability_cliff": "Raw-output formatting drifts.",
+            "misdiagnosed_ids": [],
+            "misdiagnosis_corrections": {},
+            "cluster_coherence": 0.82,
+            "semantic_merges": [
+                {
+                    "source_tag": "extraneous_characters",
+                    "target_tag": "markdown_formatting",
+                    "confirmed": True,
+                }
+            ],
+        }
+
+    enriched_clusters, tag_mappings = apply_collective_diagnosis(
+        cluster_diagnoses(diagnoses),
+        collective_stub,
+    )
+
+    assert [cluster.sub_tags for cluster in enriched_clusters] == [["markdown_formatting"], ["extraneous_characters"]]
+    assert tag_mappings["markdown_formatting"] == "markdown_formatting"
+    assert tag_mappings["extraneous_characters"] == "extraneous_characters"
+
+
+def test_collective_diagnosis_does_not_merge_missing_code_block_into_syntax_error() -> None:
+    from codemint.aggregate.collective import apply_collective_diagnosis
+    from codemint.aggregate.cluster import cluster_diagnoses
+
+    diagnoses = [
+        _diagnosis(61, "implementation", ["missing_code_block"]),
+        _diagnosis(62, "implementation", ["syntax_error"]),
+    ]
+
+    def collective_stub(payload: dict) -> dict:
+        return {
+            "refined_root_cause": "Non-executable response issue.",
+            "capability_cliff": "Code output fails to execute.",
+            "misdiagnosed_ids": [],
+            "misdiagnosis_corrections": {},
+            "cluster_coherence": 0.8,
+            "semantic_merges": [
+                {
+                    "source_tag": "missing_code_block",
+                    "target_tag": "syntax_error",
+                    "confirmed": True,
+                }
+            ],
+        }
+
+    enriched_clusters, tag_mappings = apply_collective_diagnosis(
+        cluster_diagnoses(diagnoses),
+        collective_stub,
+    )
+
+    assert [cluster.sub_tags for cluster in enriched_clusters] == [["missing_code_block"], ["syntax_error"]]
+    assert tag_mappings["missing_code_block"] == "missing_code_block"
+    assert tag_mappings["syntax_error"] == "syntax_error"
+
+
 def _diagnosis(task_id: int, fault_type: str, sub_tags: list[str]) -> DiagnosisRecord:
     return DiagnosisRecord(
         task_id=task_id,

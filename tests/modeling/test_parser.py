@@ -50,3 +50,16 @@ def test_parser_retries_once_on_invalid_json() -> None:
     assert parsed == AnswerModel(answer="ok")
     assert call_contexts[0] is None
     assert call_contexts[1] is not None
+
+
+def test_parser_accepts_json_fenced_code_block_without_retry() -> None:
+    call_contexts: list[str | None] = []
+
+    def invoke(format_error: str | None = None) -> str:
+        call_contexts.append(format_error)
+        return '```json\n{"answer":"ok"}\n```'
+
+    parsed = parse_with_retry(AnswerModel, invoke)
+
+    assert parsed == AnswerModel(answer="ok")
+    assert call_contexts == [None]

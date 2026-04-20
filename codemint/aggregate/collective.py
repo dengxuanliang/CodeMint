@@ -7,11 +7,18 @@ from pydantic import Field
 
 from codemint.aggregate.cluster import DiagnosisCluster
 from codemint.models.base import StrictModel
-from codemint.models.diagnosis import DiagnosisRecord, FaultType
+from codemint.models.diagnosis import DiagnosisRecord, FaultType, SUCCESS_LIKE_SUB_TAGS
 from codemint.models.weakness import CollectiveDiagnosis
 
 
 CollectiveAnalyzer = Callable[[dict], dict]
+PROTECTED_CANONICAL_TAGS = frozenset(
+    {
+        "function_name_mismatch",
+        "markdown_formatting",
+        "missing_code_block",
+    }
+)
 
 
 class SemanticMerge(StrictModel):
@@ -71,7 +78,11 @@ def apply_collective_diagnosis(
             )
         )
         for merge in analysis.semantic_merges:
-            if merge.confirmed:
+            if merge.confirmed and _can_merge_tags(
+                fault_type=cluster.fault_type,
+                source_tag=merge.source_tag,
+                target_tag=merge.target_tag,
+            ):
                 raw_tag_mappings[merge.source_tag] = merge.target_tag
 
     resolved_tag_mappings = _resolve_tag_mappings(raw_tag_mappings)
@@ -222,6 +233,21 @@ def _resolve_tag_mappings(tag_mappings: dict[str, str]) -> dict[str, str]:
     for source_tag in tag_mappings:
         resolved[source_tag] = _resolve_canonical_tag(source_tag, tag_mappings)
     return resolved
+
+
+def _can_merge_tags(*, fault_type: FaultType, source_tag: str, target_tag: str) -> bool:
+    if fault_type != "implementation" and fault_type != "surface":
+        return source_tag != target_tag
+
+    source = source_tag.strip().lower()
+    target = target_tag.strip().lower()
+    if not source or not target or source == target:
+        return False
+    if source in SUCCESS_LIKE_SUB_TAGS or target in SUCCESS_LIKE_SUB_TAGS:
+        return False
+    if source in PROTECTED_CANONICAL_TAGS or target in PROTECTED_CANONICAL_TAGS:
+        return False
+    return True
 
 
 def _resolve_canonical_tag(source_tag: str, tag_mappings: dict[str, str]) -> str:

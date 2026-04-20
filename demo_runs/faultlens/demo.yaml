@@ -1,0 +1,19 @@
+model:
+  base_url: "http://1.95.77.23:3000/v1/chat/completions"
+  api_key: "sk-x1L2MWkvRO2xJ4Z309JsPfHUhpDftBoSibTs3RBDdkDG6XHA"
+  analysis_model: "glm-5"
+  evaluated_model: "faultlens-demo"
+  max_concurrency: 5
+  max_retries: 3
+  retry_backoff: "exponential"
+  timeout: 120
+  max_input_tokens: 8000
+
+synthesize:
+  specs_per_weakness: 2
+  max_per_weakness: 2
+  top_n: 3
+  narrative_themes:
+    generic: ["warehouses", "ports", "scheduling"]
+    domain_adaptive: false
+  data_structures: ["array", "graph"]

@@ -10,10 +10,20 @@ def truncate_payload(task: TaskRecord, max_input_tokens: int) -> TaskRecord:
     if content_tokens >= max_input_tokens:
         return replace(task, test_code="", canonical_solution="")
 
-    remaining_budget = max_input_tokens - content_tokens
-    canonical_solution = _truncate_text(task.canonical_solution, remaining_budget)
-    remaining_budget -= _estimate_tokens(canonical_solution)
-    test_code = _truncate_text(task.test_code, remaining_budget)
+    test_tokens = _estimate_tokens(task.test_code)
+    canonical_tokens = _estimate_tokens(task.canonical_solution)
+    total_tokens = content_tokens + test_tokens + canonical_tokens
+
+    if total_tokens <= max_input_tokens:
+        return replace(task)
+
+    overflow = total_tokens - max_input_tokens
+    kept_test_tokens = max(test_tokens - overflow, 0)
+    overflow = max(overflow - test_tokens, 0)
+    kept_canonical_tokens = max(canonical_tokens - overflow, 0)
+
+    test_code = _truncate_text(task.test_code, kept_test_tokens)
+    canonical_solution = _truncate_text(task.canonical_solution, kept_canonical_tokens)
     return replace(task, test_code=test_code, canonical_solution=canonical_solution)
 
 

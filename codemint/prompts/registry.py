@@ -5,6 +5,7 @@ from pathlib import Path
 
 
 PROMPTS_DIR = Path(__file__).resolve().parents[2] / "prompts"
+PROMPT_OVERRIDE_DIR: Path | None = None
 VERSION_PREFIX = "Version:"
 
 
@@ -21,7 +22,7 @@ class PromptTemplate:
 
 def load_prompt(name: str) -> PromptTemplate:
     safe_name = _validate_prompt_name(name)
-    path = (PROMPTS_DIR / f"{safe_name}.txt").resolve()
+    path = _resolve_prompt_path(safe_name)
     raw_text = path.read_text(encoding="utf-8").strip()
     lines = raw_text.splitlines()
     if not lines or not lines[0].startswith(VERSION_PREFIX):
@@ -30,6 +31,19 @@ def load_prompt(name: str) -> PromptTemplate:
     version = lines[0].split(":", 1)[1].strip()
     body = "\n".join(lines[1:]).lstrip()
     return PromptTemplate(name=name, version=version, text=body)
+
+
+def set_prompt_override_dir(path: Path | None) -> None:
+    global PROMPT_OVERRIDE_DIR
+    PROMPT_OVERRIDE_DIR = path.resolve() if path is not None else None
+
+
+def _resolve_prompt_path(name: str) -> Path:
+    if PROMPT_OVERRIDE_DIR is not None:
+        override_path = (PROMPT_OVERRIDE_DIR / f"{name}.txt").resolve()
+        if override_path.exists() and PROMPT_OVERRIDE_DIR.resolve() in override_path.parents:
+            return override_path
+    return (PROMPTS_DIR / f"{name}.txt").resolve()
 
 
 def _validate_prompt_name(name: str) -> str:

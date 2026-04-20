@@ -69,14 +69,26 @@ def test_full_pipeline_produces_all_expected_artifacts(tmp_path: Path) -> None:
     assert len(specs) == 2
     assert all(spec.diversity_tags != existing_specs[0].diversity_tags for spec in specs)
     assert "final warehouse" in specs[1].generation_hints.common_wrong_approach
-    assert json.loads((run_dir / "run_metadata.json").read_text(encoding="utf-8"))["summary"] == {
+    summary = json.loads((run_dir / "run_metadata.json").read_text(encoding="utf-8"))["summary"]
+    assert summary == {
         "diagnosed": 2,
         "rule_screened": 1,
         "model_analyzed": 1,
+        "non_failures": 0,
         "errors": 0,
+        "skipped": 0,
+        "elapsed_seconds": summary["elapsed_seconds"],
         "weaknesses_found": 1,
         "specs_generated": 2,
+        "synthesize_failures": 0,
+        "specs_by_weakness": {"state_tracking": 2},
+        "synthesize_status": "success",
+        "attempted_weaknesses": ["state_tracking"],
+        "covered_weaknesses": ["state_tracking"],
+        "weaknesses_without_specs": [],
+        "synthesize_failure_reasons_by_weakness": {},
     }
+    assert summary["elapsed_seconds"] >= 0
 
 
 def test_parse_failure_is_retried_once_then_logged_to_errors_jsonl(tmp_path: Path) -> None:

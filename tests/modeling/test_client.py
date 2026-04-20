@@ -161,3 +161,30 @@ def test_model_client_uses_time_sleep_by_default() -> None:
 def test_model_client_rejects_non_positive_max_retries() -> None:
     with pytest.raises(ValueError, match="max_retries"):
         ModelClient(ModelConfig(base_url="https://example.test", max_retries=0))
+
+
+def test_model_client_does_not_duplicate_chat_completions_suffix(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen = {"url": None}
+
+    def fake_post(
+        self: httpx.Client,
+        url: str,
+        *,
+        json: dict[str, object],
+        headers: dict[str, str],
+    ) -> DummyResponse:
+        seen["url"] = url
+        return DummyResponse({"choices": [{"message": {"content": "ok"}}]})
+
+    monkeypatch.setattr(httpx.Client, "post", fake_post)
+
+    client = ModelClient(
+        ModelConfig(
+            base_url="https://example.test/chat/completions",
+            analysis_model="gpt-test",
+        ),
+        sleeper=lambda _: None,
+    )
+
+    assert client.complete("system prompt", "user prompt") == "ok"
+    assert seen["url"] == "https://example.test/chat/completions"

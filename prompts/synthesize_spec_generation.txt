@@ -2,3 +2,47 @@ Version: v1
 
 Generate new task specifications that target the identified weakness without duplicating prior tasks.
 
+Return JSON only. Do not wrap the response in markdown or code fences.
+
+Required schema:
+{
+  "algorithm_type": "dynamic programming",
+  "difficulty": "medium|hard",
+  "narrative_theme": "warehouses",
+  "constraints": {
+    "n_range": [1, 1000],
+    "value_range": [0, 1000000],
+    "time_limit": "1s",
+    "memory_limit": "256MB"
+  },
+  "key_trap": "must explicitly reference the original evidence",
+  "must_cover": ["short requirement"],
+  "must_avoid": ["short anti-pattern"],
+  "verification_spec": {
+    "min_test_cases": 4,
+    "must_include_edge_cases": ["edge case"],
+    "brute_force_verifiable": true,
+    "brute_force_complexity_limit": "O(n^2)"
+  },
+  "generation_hints": {
+    "solution_approach": "one concise solution direction",
+    "common_wrong_approach": "one concise failure mode",
+    "distinguishing_test": "one concise test idea"
+  },
+  "language_constraint": {
+    "target_languages": ["python"],
+    "language_specific": false
+  }
+}
+
+Rules:
+- Use this exact top-level schema and field names only.
+- Do not return `tasks`, `task_specifications`, `prompt`, `tags`, or any extra keys.
+- `constraints`, `verification_spec`, `generation_hints`, and `language_constraint` must be objects, never strings.
+- `must_cover` and `must_avoid` must be arrays of strings, never a single string.
+- `difficulty` must be exactly `medium` or `hard`.
+- `key_trap` must concretely reference the supplied original evidence instead of generic wording.
+- If the weakness is `function_name_mismatch`, `must_cover` must require one exact callable public entry point and `must_avoid` must forbid alternate public function names.
+- If the weakness is `markdown_formatting`, `must_cover` must require raw executable output and `must_avoid` must forbid markdown fences, backticks, or wrapping delimiters.
+- If the weakness is about missing code output, `must_cover` must explicitly require executable code output and a callable solution entry point.
+- If the weakness is about missing code output, `must_avoid` must explicitly forbid explanation-only or prose-only final answers.

@@ -32,8 +32,13 @@ Rules:
 - `evidence` must be an object, never a string.
 - All `enriched_labels` values must be strings.
 - Use canonical weakness tags in `sub_tags`; do not invent synonyms when one of these applies.
+- For failure cases, the primary `sub_tags[0]` must be one of exactly: `function_name_mismatch`, `markdown_formatting`, `missing_code_block`, `syntax_error`, `logic_error`, or `non_executable_code`.
+- Secondary tags, if any, must also come from that same allowed failure taxonomy. Do not emit tags like `missing_colon`, `wrong_function_name`, or any other invented root tag.
 - `function_name_mismatch` means the public entry point or test-harness contract uses a different callable name/signature than the completion exposes.
 - `markdown_formatting` means the completion adds markdown fences or other raw-output formatting noise around otherwise executable code.
 - `missing_code_block` means the completion gives explanation, commentary, or analysis instead of executable code.
+- `syntax_error` means the emitted code is syntactically invalid Python and cannot be parsed or executed as code.
+- `logic_error` means the emitted code is executable but computes the wrong result.
+- `non_executable_code` means the output is code-like text but still not directly runnable as the required solution.
 - If the record is success-like rather than a real failure, use only success-like `sub_tags` such as `correct_output`, `correct_execution`, `correct_solution`, or `pass`, and set `diagnosis_source` to `non_failure` instead of any failure source.
 - If you are unsure, still choose the closest allowed enum value instead of inventing a new one.

@@ -65,6 +65,7 @@ def plan_diversity_tags(
 ) -> list[DiversityTags]:
     themes = _candidate_themes(weakness, count, config)
     planned: list[DiversityTags] = []
+    relevant_existing_specs = _relevant_existing_specs(existing_specs, weakness)
 
     for narrative_theme, data_structure, constraint_scale in product(
         themes,
@@ -77,7 +78,7 @@ def plan_diversity_tags(
             constraint_scale=constraint_scale,
         )
         assignment = assign_diversity_tags(
-            existing_specs + _planned_specs(planned, weakness),
+            relevant_existing_specs + _planned_specs(planned, weakness),
             candidate,
             config.diversity_overlap_threshold,
         )
@@ -132,6 +133,15 @@ def _planned_specs(planned: list[DiversityTags], weakness: WeaknessEntry) -> lis
             prompt_version="planned",
         )
         for index, tags in enumerate(planned, start=1)
+    ]
+
+
+def _relevant_existing_specs(existing_specs: list[SpecRecord], weakness: WeaknessEntry) -> list[SpecRecord]:
+    target_key = weakness_key(weakness)
+    return [
+        spec
+        for spec in existing_specs
+        if weakness_key(spec.target_weakness) == target_key
     ]
 
 

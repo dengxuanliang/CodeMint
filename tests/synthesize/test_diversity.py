@@ -11,6 +11,7 @@ from codemint.models.spec import (
     TargetWeakness,
     VerificationSpec,
 )
+from codemint.models.weakness import CollectiveDiagnosis, WeaknessEntry
 
 
 def test_diversity_assignment_rejects_overlap_above_threshold() -> None:
@@ -37,12 +38,49 @@ def test_diversity_assignment_rejects_overlap_above_threshold() -> None:
     assert "overlap" in result.reason
 
 
-def _spec(spec_id: str, theme: str, data_structure: str, scale: str) -> SpecRecord:
+def test_plan_diversity_tags_only_considers_existing_specs_for_same_weakness() -> None:
+    from codemint.synthesize.diversity import plan_diversity_tags
+
+    config = CodeMintConfig.model_validate(
+        {
+            "synthesize": {
+                "specs_per_weakness": 2,
+                "max_per_weakness": 2,
+                "top_n": 2,
+                "narrative_themes": {
+                    "generic": ["warehouses"],
+                    "domain_adaptive": False,
+                },
+                "data_structures": ["array", "graph"],
+            }
+        }
+    )
+    target = _weakness("syntax_error")
+    existing = [
+        _spec("spec-1", "warehouses", "array", "small", weakness_tag="function_name_mismatch"),
+        _spec("spec-2", "warehouses", "array", "medium", weakness_tag="missing_code"),
+        _spec("spec-3", "warehouses", "array", "large", weakness_tag="formatting_error"),
+    ]
+
+    planned = plan_diversity_tags(target, 2, config.synthesize, existing)
+
+    assert len(planned) == 2
+    assert planned[0] != planned[1]
+
+
+def _spec(
+    spec_id: str,
+    theme: str,
+    data_structure: str,
+    scale: str,
+    *,
+    weakness_tag: str = "state_tracking",
+) -> SpecRecord:
     return SpecRecord(
         spec_id=spec_id,
         target_weakness=TargetWeakness(
             fault_type="modeling",
-            sub_tags=["state_tracking"],
+            sub_tags=[weakness_tag],
             root_cause="state drift",
             capability_cliff="graph transitions",
         ),
@@ -81,4 +119,22 @@ def _spec(spec_id: str, theme: str, data_structure: str, scale: str) -> SpecReco
             language_specific=False,
         ),
         prompt_version="v1",
+    )
+
+
+def _weakness(tag: str) -> WeaknessEntry:
+    return WeaknessEntry(
+        rank=1,
+        fault_type="implementation",
+        sub_tags=[tag],
+        frequency=2,
+        sample_task_ids=[1, 2],
+        trainability=0.6,
+        collective_diagnosis=CollectiveDiagnosis(
+            refined_root_cause=f"{tag} root cause",
+            capability_cliff=f"{tag} cliff",
+            misdiagnosed_ids=[],
+            misdiagnosis_corrections={},
+            cluster_coherence=0.9,
+        ),
     )

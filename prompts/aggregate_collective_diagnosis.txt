@@ -2,3 +2,33 @@ Version: v1
 
 Aggregate multiple diagnoses into a consolidated view with overlapping themes preserved.
 
+Return JSON only. Do not wrap the response in markdown or code fences.
+
+Required schema:
+{
+  "refined_root_cause": "one concise cluster-level root cause",
+  "capability_cliff": "one concise description of when this capability breaks",
+  "misdiagnosed_ids": [123],
+  "misdiagnosis_corrections": {
+    "123": "implementation:off_by_one"
+  },
+  "cluster_coherence": 0.0,
+  "semantic_merges": [
+    {
+      "source_tag": "alias_tag",
+      "target_tag": "canonical_tag",
+      "confirmed": true
+    }
+  ]
+}
+
+Rules:
+- `misdiagnosed_ids` must be an array of integers.
+- `misdiagnosis_corrections` values must use the exact format `fault_type:sub_tag`.
+- Allowed `fault_type` values inside corrections are: comprehension, modeling, implementation, edge_handling, surface.
+- `cluster_coherence` must be a number between 0.0 and 1.0.
+- `semantic_merges` must be an array of objects.
+- Each semantic merge must include `source_tag`, `target_tag`, and boolean `confirmed`.
+- Use empty arrays or empty objects instead of null.
+- Do not request merges for `function_name_mismatch`, `markdown_formatting`, or `missing_code_block`; these tags must remain distinct canonical weaknesses.
+- Do not merge any success-like tags such as `correct_output`, `correct_execution`, `correct_solution`, or `pass` into weaknesses.

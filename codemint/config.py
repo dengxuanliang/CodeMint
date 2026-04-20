@@ -33,6 +33,10 @@ class EvaluationAPIConfig(StrictModel):
     base_url: str | None = None
 
 
+class PromptConfig(StrictModel):
+    override_dir: Path | None = None
+
+
 class CustomPatternConfig(StrictModel):
     name: str
     pattern: str
@@ -92,6 +96,7 @@ class SynthesizeConfig(StrictModel):
 class CodeMintConfig(StrictModel):
     model: ModelConfig = Field(default_factory=ModelConfig)
     evaluation_api: EvaluationAPIConfig = Field(default_factory=EvaluationAPIConfig)
+    prompts: PromptConfig = Field(default_factory=PromptConfig)
     rules: RulesConfig = Field(default_factory=RulesConfig)
     aggregate: AggregateConfig = Field(default_factory=AggregateConfig)
     synthesize: SynthesizeConfig = Field(default_factory=SynthesizeConfig)

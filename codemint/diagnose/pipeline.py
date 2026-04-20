@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
+from pydantic import ValidationError
+
+from codemint.config import CodeMintConfig
 from codemint.diagnose.confirm import (
     ConfirmAnalyzer,
     confirm_rule_with_model,
@@ -10,8 +14,11 @@ from codemint.diagnose.confirm import (
 from codemint.diagnose.deep import DeepAnalyzer, deep_analyze_with_model
 from codemint.diagnose.resume import find_missing_task_ids
 from codemint.io.jsonl import append_jsonl, read_jsonl
+from codemint.modeling.client import ModelClient
+from codemint.modeling.parser import parse_with_retry
 from codemint.models.diagnosis import DiagnosisEvidence, DiagnosisRecord, SUCCESS_LIKE_SUB_TAGS
 from codemint.models.task import TaskRecord
+from codemint.prompts.registry import load_prompt
 from codemint.rules.builtin import DiagnosisRule
 from codemint.rules.custom import build_rules
 from codemint.rules.engine import RuleEngine
@@ -31,7 +38,19 @@ _CANONICAL_SUB_TAGS = {
     "no_code_provided": "missing_code_block",
     "explanation_without_code": "missing_code_block",
     "commentary_instead_of_code": "missing_code_block",
+    "missing_colon": "syntax_error",
 }
+
+_ALLOWED_FAILURE_SUB_TAGS = frozenset(
+    {
+        "function_name_mismatch",
+        "markdown_formatting",
+        "missing_code_block",
+        "syntax_error",
+        "logic_error",
+        "non_executable_code",
+    }
+)
 
 
 def run_diagnose(
@@ -39,12 +58,14 @@ def run_diagnose(
     output_path: Path,
     rules: list[DiagnosisRule] | None = None,
     *,
+    config: CodeMintConfig | None = None,
     confirm_analyzer: ConfirmAnalyzer | None = None,
     deep_analyzer: DeepAnalyzer | None = None,
 ) -> list[DiagnosisRecord]:
     active_rules = rules or build_rules()
-    confirmer = confirm_analyzer or default_confirm_analyzer
-    deep = deep_analyzer or _default_deep_analyzer
+    resolved_config = config or CodeMintConfig()
+    confirmer = confirm_analyzer or _default_confirm_analyzer(resolved_config)
+    deep = deep_analyzer or _default_deep_analyzer(resolved_config)
     engine = RuleEngine(active_rules)
     _validate_unique_task_ids(tasks)
     existing_diagnoses = _load_existing_diagnoses(output_path)
@@ -103,22 +124,95 @@ def _task_text(task: TaskRecord) -> str:
     return "\n".join(part for part in parts if part)
 
 
-def _default_deep_analyzer(task: TaskRecord) -> DiagnosisRecord:
+def _default_deep_analyzer(config: CodeMintConfig) -> DeepAnalyzer:
+    client = _build_model_client(config)
+    if client is None:
+        return _fallback_deep_analyzer
+
+    prompt = load_prompt("diagnose_deep_analysis")
+
+    def analyze(task: TaskRecord) -> DiagnosisRecord:
+        payload = {
+            "task_id": task.task_id,
+            "content": task.content,
+            "completion": task.completion,
+            "test_code": task.test_code,
+            "labels": task.labels,
+            "accepted": task.accepted,
+            "metrics": task.metrics,
+        }
+
+        def invoke(format_error: str | None) -> str:
+            user_prompt = f"{prompt.template}\n\nPayload JSON:\n{json.dumps(payload, ensure_ascii=False)}"
+            if format_error:
+                user_prompt += f"\n\nFormat correction:\n{format_error}"
+            return client.complete("Return only valid JSON.", str(user_prompt))
+
+        record = _parse_diagnosis_with_retry(invoke)
+        return record.model_copy(update={"prompt_version": prompt.version})
+
+    return analyze
+
+
+def _default_confirm_analyzer(config: CodeMintConfig) -> ConfirmAnalyzer:
+    client = _build_model_client(config)
+    if client is None:
+        return default_confirm_analyzer
+
+    prompt = load_prompt("diagnose_deep_analysis")
+
+    def analyze(task: TaskRecord, rule: DiagnosisRule) -> DiagnosisRecord:
+        payload = {
+            "task_id": task.task_id,
+            "content": task.content,
+            "completion": task.completion,
+            "test_code": task.test_code,
+            "matched_rule": {
+                "rule_id": rule.rule_id,
+                "fault_type": rule.fault_type,
+                "sub_tag": rule.sub_tag,
+                "severity": rule.severity,
+            },
+        }
+
+        def invoke(format_error: str | None) -> str:
+            user_prompt = (
+                f"{prompt.template}\n\nPayload JSON:\n{json.dumps(payload, ensure_ascii=False)}"
+                "\n\nThe matched rule is a high-confidence hint, but you must still return the final diagnosis JSON."
+            )
+            if format_error:
+                user_prompt += f"\n\nFormat correction:\n{format_error}"
+            return client.complete("Return only valid JSON.", str(user_prompt))
+
+        record = _parse_diagnosis_with_retry(invoke)
+        return record.model_copy(
+            update={
+                "diagnosis_source": "rule_confirmed_by_model"
+                if record.diagnosis_source != "non_failure"
+                else "non_failure",
+                "prompt_version": prompt.version,
+            }
+        )
+
+    return analyze
+
+
+def _fallback_deep_analyzer(task: TaskRecord) -> DiagnosisRecord:
     return DiagnosisRecord(
         task_id=task.task_id,
         fault_type="implementation",
         sub_tags=["deep_analysis"],
         severity="medium",
-        description="Deep model analysis required.",
+        description="Deep model analysis unavailable; fallback placeholder recorded.",
         evidence=DiagnosisEvidence(
             wrong_line=task.completion,
             correct_approach="Inspect the failing behavior in context and reason from tests.",
             failed_test=task.test_code,
         ),
-        enriched_labels={},
-        confidence=0.7,
+        enriched_labels={"fallback_mode": "true"},
+        confidence=0.2,
         diagnosis_source="model_deep",
-        prompt_version="deep-v1",
+        prompt_version="deep-fallback-v1",
     )
 
 
@@ -168,3 +262,52 @@ def _load_existing_diagnoses(output_path: Path) -> list[DiagnosisRecord]:
         return []
 
     return [_normalize_diagnosis_record(DiagnosisRecord.model_validate(row)) for row in read_jsonl(output_path)]
+
+
+def _build_model_client(config: CodeMintConfig) -> ModelClient | None:
+    model = config.model
+    if not (model.analysis_model and model.base_url and model.api_key):
+        return None
+    return ModelClient(model)
+
+
+def _parse_diagnosis_with_retry(invoke) -> DiagnosisRecord:
+    record = parse_with_retry(DiagnosisRecord, invoke)
+    normalized = _normalize_diagnosis_record(record)
+    error = _taxonomy_error(normalized)
+    if error is None:
+        return normalized
+
+    reparsed = parse_with_retry(
+        DiagnosisRecord,
+        lambda _: invoke(
+            f"{error} Use only the allowed taxonomy: "
+            f"{sorted(_ALLOWED_FAILURE_SUB_TAGS)} plus success-like tags "
+            f"{sorted(SUCCESS_LIKE_SUB_TAGS)}."
+        ),
+    )
+    normalized_retry = _normalize_diagnosis_record(reparsed)
+    error_retry = _taxonomy_error(normalized_retry)
+    if error_retry is not None:
+        raise ValueError(error_retry)
+    return normalized_retry
+
+
+def _taxonomy_error(record: DiagnosisRecord) -> str | None:
+    if record.diagnosis_source == "non_failure":
+        return None
+    if not record.sub_tags:
+        return "Diagnosis must include at least one sub_tag."
+
+    primary_tag = record.sub_tags[0]
+    if primary_tag not in _ALLOWED_FAILURE_SUB_TAGS:
+        return f"Primary sub_tag {primary_tag!r} is outside the allowed taxonomy."
+
+    illegal = [
+        tag
+        for tag in record.sub_tags
+        if tag not in _ALLOWED_FAILURE_SUB_TAGS and tag not in SUCCESS_LIKE_SUB_TAGS
+    ]
+    if illegal:
+        return f"Sub_tags {illegal!r} are outside the allowed taxonomy."
+    return None
