@@ -2,20 +2,22 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from codemint.diagnose import pipeline as pipeline_module
 from codemint.diagnose.item_mode import run_item_mode
+from codemint.io.jsonl import read_jsonl
 from codemint.models.diagnosis import DiagnosisEvidence, DiagnosisRecord
 from codemint.models.task import TaskRecord
 from codemint.rules.custom import build_rules
 
 
-def test_item_mode_matches_legacy_pipeline_behavior(tmp_path: Path) -> None:
+def test_item_mode_persists_and_returns_expected_diagnoses(tmp_path: Path) -> None:
     tasks = [
         _task(1, "The submission crashes with NameError: helper is not defined"),
         _task(2, "Program returns the wrong total for some inputs."),
     ]
+    calls: list[tuple[str, int, str]] = []
 
     def confirm_analyzer(task: TaskRecord, rule) -> DiagnosisRecord:
+        calls.append(("confirm", task.task_id, rule.rule_id))
         return _diagnosis(
             task.task_id,
             diagnosis_source="rule_confirmed_by_model",
@@ -26,30 +28,66 @@ def test_item_mode_matches_legacy_pipeline_behavior(tmp_path: Path) -> None:
         )
 
     def deep_analyzer(task: TaskRecord) -> DiagnosisRecord:
+        calls.append(("deep", task.task_id, ""))
         return _diagnosis(
             task.task_id,
             diagnosis_source="model_deep",
             description=f"Deep analysis for task {task.task_id}.",
         )
 
-    legacy_result = _legacy_run_diagnose(
+    output_path = tmp_path / "item.jsonl"
+    result = run_item_mode(
         tasks,
-        tmp_path / "legacy.jsonl",
-        rules=build_rules(),
-        confirm_analyzer=confirm_analyzer,
-        deep_analyzer=deep_analyzer,
-    )
-    item_result = run_item_mode(
-        tasks,
-        output_path=tmp_path / "item.jsonl",
+        output_path=output_path,
         rules=build_rules(),
         confirm_analyzer=confirm_analyzer,
         deep_analyzer=deep_analyzer,
     )
 
-    assert [row.model_dump(mode="json") for row in legacy_result] == [
-        row.model_dump(mode="json") for row in item_result
+    assert calls == [("confirm", 1, "R002"), ("deep", 2, "")]
+    assert [row.task_id for row in result] == [1, 2]
+    assert [row.diagnosis_source for row in result] == ["rule_confirmed_by_model", "model_deep"]
+    assert read_jsonl(output_path) == [
+        row.model_dump(mode="json") for row in result
     ]
+
+
+def test_item_mode_preserves_existing_rows_and_skips_completed_tasks(tmp_path: Path) -> None:
+    tasks = [
+        _task(1, "The submission crashes with NameError: helper is not defined"),
+        _task(2, "Program returns the wrong total for some inputs."),
+    ]
+    existing = _diagnosis(
+        1,
+        diagnosis_source="rule_only",
+        sub_tags=["undefined_variable"],
+        severity="medium",
+        description="Precomputed diagnosis.",
+    )
+    output_path = tmp_path / "item.jsonl"
+    output_path.write_text(existing.model_dump_json() + "\n", encoding="utf-8")
+    calls: list[int] = []
+
+    def confirm_analyzer(task: TaskRecord, rule) -> DiagnosisRecord:
+        calls.append(task.task_id)
+        return _diagnosis(task.task_id, diagnosis_source="rule_confirmed_by_model")
+
+    def deep_analyzer(task: TaskRecord) -> DiagnosisRecord:
+        calls.append(task.task_id)
+        return _diagnosis(task.task_id, diagnosis_source="model_deep")
+
+    result = run_item_mode(
+        tasks,
+        output_path=output_path,
+        rules=build_rules(),
+        confirm_analyzer=confirm_analyzer,
+        deep_analyzer=deep_analyzer,
+    )
+
+    assert [row.task_id for row in result] == [1, 2]
+    assert calls == [2]
+    assert read_jsonl(output_path)[0] == existing.model_dump(mode="json")
+    assert read_jsonl(output_path)[1]["diagnosis_source"] == "model_deep"
 
 
 def _task(task_id: int, completion: str) -> TaskRecord:
@@ -91,36 +129,3 @@ def _diagnosis(
         diagnosis_source=diagnosis_source,
         prompt_version="test-v1",
     )
-
-
-def _legacy_run_diagnose(
-    tasks: list[TaskRecord],
-    output_path: Path,
-    *,
-    rules,
-    confirm_analyzer,
-    deep_analyzer,
-):
-    active_rules = rules or pipeline_module.build_rules()
-    confirmer = confirm_analyzer or pipeline_module._default_confirm_analyzer(pipeline_module.CodeMintConfig())
-    deep = deep_analyzer or pipeline_module._default_deep_analyzer(pipeline_module.CodeMintConfig())
-    engine = pipeline_module.RuleEngine(active_rules)
-    pipeline_module._validate_unique_task_ids(tasks)
-    existing_diagnoses = pipeline_module._load_existing_diagnoses(output_path)
-
-    missing_task_ids = set(
-        pipeline_module.find_missing_task_ids(output_path, [task.task_id for task in tasks])
-    )
-    new_diagnoses = []
-    for task in tasks:
-        if task.task_id not in missing_task_ids:
-            continue
-        new_diagnoses.append(pipeline_module._diagnose_task(task, engine, confirmer, deep))
-
-    if new_diagnoses:
-        pipeline_module.append_jsonl(
-            output_path,
-            [diagnosis.model_dump(mode="json") for diagnosis in new_diagnoses],
-        )
-
-    return existing_diagnoses + new_diagnoses

@@ -312,7 +312,7 @@ def test_run_diagnose_uses_model_backed_deep_analyzer_when_configured(
             }
             ```"""
 
-    monkeypatch.setattr("codemint.diagnose.pipeline.ModelClient", StubClient)
+    monkeypatch.setattr("codemint.diagnose.item_mode.ModelClient", StubClient)
 
     diagnoses = run_diagnose(
         [task],
@@ -374,7 +374,7 @@ def test_run_diagnose_retries_after_invalid_model_output(
               "prompt_version": "v1"
             }"""
 
-    monkeypatch.setattr("codemint.diagnose.pipeline.ModelClient", StubClient)
+    monkeypatch.setattr("codemint.diagnose.item_mode.ModelClient", StubClient)
 
     diagnoses = run_diagnose(
         [task],
@@ -446,7 +446,7 @@ def test_run_diagnose_rejects_non_taxonomy_primary_tag_and_retries(
               "prompt_version": "v1"
             }"""
 
-    monkeypatch.setattr("codemint.diagnose.pipeline.ModelClient", StubClient)
+    monkeypatch.setattr("codemint.diagnose.item_mode.ModelClient", StubClient)
 
     diagnoses = run_diagnose(
         [task],
