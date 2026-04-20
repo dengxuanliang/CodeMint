@@ -12,6 +12,7 @@ from codemint.diagnose.confirm import (
     default_confirm_analyzer,
 )
 from codemint.diagnose.deep import DeepAnalyzer, deep_analyze_with_model
+from codemint.diagnose.item_mode import run_item_mode
 from codemint.diagnose.resume import find_missing_task_ids
 from codemint.io.jsonl import append_jsonl, read_jsonl
 from codemint.modeling.client import ModelClient
@@ -62,25 +63,19 @@ def run_diagnose(
     confirm_analyzer: ConfirmAnalyzer | None = None,
     deep_analyzer: DeepAnalyzer | None = None,
 ) -> list[DiagnosisRecord]:
-    active_rules = rules or build_rules()
     resolved_config = config or CodeMintConfig()
-    confirmer = confirm_analyzer or _default_confirm_analyzer(resolved_config)
-    deep = deep_analyzer or _default_deep_analyzer(resolved_config)
-    engine = RuleEngine(active_rules)
-    _validate_unique_task_ids(tasks)
-    existing_diagnoses = _load_existing_diagnoses(output_path)
+    processing_mode = getattr(getattr(resolved_config, "diagnose", None), "processing_mode", "item")
+    if processing_mode == "item":
+        return run_item_mode(
+            tasks,
+            output_path,
+            rules=rules,
+            config=resolved_config,
+            confirm_analyzer=confirm_analyzer,
+            deep_analyzer=deep_analyzer,
+        )
 
-    missing_task_ids = set(find_missing_task_ids(output_path, [task.task_id for task in tasks]))
-    new_diagnoses: list[DiagnosisRecord] = []
-    for task in tasks:
-        if task.task_id not in missing_task_ids:
-            continue
-        new_diagnoses.append(_diagnose_task(task, engine, confirmer, deep))
-
-    if new_diagnoses:
-        append_jsonl(output_path, [diagnosis.model_dump(mode="json") for diagnosis in new_diagnoses])
-
-    return existing_diagnoses + new_diagnoses
+    raise ValueError(f"Unsupported diagnose processing mode: {processing_mode}")
 
 
 def _diagnose_task(

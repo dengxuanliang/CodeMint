@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from codemint.config import CodeMintConfig
+from codemint.diagnose.item_mode import run_item_mode
 from codemint.diagnose.pipeline import run_diagnose
 from codemint.io.jsonl import read_jsonl
 from codemint.models.diagnosis import DiagnosisEvidence, DiagnosisRecord
@@ -47,6 +48,49 @@ def test_rule_match_with_high_severity_calls_confirmation_model(tmp_path: Path) 
     assert calls == [("confirm", 1, "R002")]
     assert diagnoses[0].diagnosis_source == "rule_confirmed_by_model"
     assert read_jsonl(output_path) == [diagnoses[0].model_dump(mode="json")]
+
+
+def test_run_diagnose_matches_item_mode_behavior(tmp_path: Path) -> None:
+    tasks = [
+        _task(21, "The submission crashes with NameError: helper is not defined"),
+        _task(22, "Program returns the wrong total for some inputs."),
+    ]
+
+    def confirm_analyzer(task: TaskRecord, rule) -> DiagnosisRecord:
+        return _diagnosis(
+            task.task_id,
+            diagnosis_source="rule_confirmed_by_model",
+            fault_type=rule.fault_type,
+            severity=rule.severity,
+            sub_tags=[rule.sub_tag],
+            description=f"Confirmed from rule {rule.rule_id}.",
+        )
+
+    def deep_analyzer(task: TaskRecord) -> DiagnosisRecord:
+        return _diagnosis(
+            task.task_id,
+            diagnosis_source="model_deep",
+            description=f"Deep analysis for task {task.task_id}.",
+        )
+
+    pipeline_result = run_diagnose(
+        tasks,
+        tmp_path / "pipeline.jsonl",
+        rules=build_rules(),
+        confirm_analyzer=confirm_analyzer,
+        deep_analyzer=deep_analyzer,
+    )
+    item_result = run_item_mode(
+        tasks,
+        output_path=tmp_path / "item.jsonl",
+        rules=build_rules(),
+        confirm_analyzer=confirm_analyzer,
+        deep_analyzer=deep_analyzer,
+    )
+
+    assert [row.model_dump(mode="json") for row in pipeline_result] == [
+        row.model_dump(mode="json") for row in item_result
+    ]
 
 
 def test_assertion_error_routes_to_deep_analysis(tmp_path: Path) -> None:
