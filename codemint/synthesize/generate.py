@@ -1,0 +1,503 @@
+from __future__ import annotations
+
+import json
+import re
+from typing import Any
+
+from pydantic import ValidationError
+
+from codemint.modeling.parser import _normalize_json_text
+from codemint.models.base import StrictModel
+from codemint.models.spec import (
+    DiversityTags,
+    GenerationHints,
+    LanguageConstraint,
+    ProblemConstraints,
+    ProblemSpec,
+    SpecRecord,
+    TargetWeakness,
+    VerificationSpec,
+)
+from codemint.models.weakness import WeaknessEntry
+from codemint.prompts.registry import load_prompt
+
+
+class GenerationResponse(StrictModel):
+    algorithm_type: str
+    difficulty: str
+    narrative_theme: str
+    constraints: ProblemConstraints
+    key_trap: str
+    must_cover: list[str]
+    must_avoid: list[str]
+    verification_spec: VerificationSpec
+    generation_hints: GenerationHints
+    language_constraint: LanguageConstraint
+
+
+def generate_spec(
+    weakness: WeaknessEntry,
+    *,
+    diversity_tags: DiversityTags,
+    invoke_model,
+    original_evidence: dict[str, str],
+    spec_index: int,
+    difficulty: str | None = None,
+    must_avoid_constraints: list[str] | None = None,
+    repair_context: dict[str, str] | None = None,
+) -> SpecRecord:
+    prompt = load_prompt("synthesize_spec_generation")
+    payload = {
+        "template": prompt.template,
+        "weakness": {
+            "fault_type": weakness.fault_type,
+            "sub_tags": weakness.sub_tags,
+            "root_cause": weakness.collective_diagnosis.refined_root_cause,
+            "capability_cliff": weakness.collective_diagnosis.capability_cliff,
+        },
+        "original_evidence": original_evidence,
+        "diversity_tags": diversity_tags.model_dump(mode="json"),
+        "difficulty": difficulty,
+        "must_avoid_constraints": must_avoid_constraints or [],
+        "repair_context": repair_context or {"mode": "initial_generation", "reason": ""},
+    }
+    response = _validate_response(invoke_model(payload))
+    assigned_difficulty = difficulty or response.difficulty
+    key_trap = _require_evidence_grounding(response.key_trap, original_evidence)
+    must_cover = _augment_must_cover(weakness, response.must_cover)
+    must_avoid = _augment_must_avoid(weakness, response.must_avoid)
+
+    return SpecRecord(
+        spec_id=f"spec-{spec_index:04d}",
+        target_weakness=TargetWeakness(
+            fault_type=weakness.fault_type,
+            sub_tags=weakness.sub_tags,
+            root_cause=weakness.collective_diagnosis.refined_root_cause,
+            capability_cliff=weakness.collective_diagnosis.capability_cliff,
+        ),
+        problem_spec=ProblemSpec(
+            algorithm_type=response.algorithm_type,
+            difficulty=assigned_difficulty,
+            narrative_theme=diversity_tags.narrative_theme,
+            constraints=response.constraints,
+            key_trap=key_trap,
+            must_cover=must_cover,
+            must_avoid=must_avoid + list(must_avoid_constraints or []),
+        ),
+        verification_spec=response.verification_spec,
+        diversity_tags=diversity_tags,
+        generation_hints=response.generation_hints,
+        language_constraint=response.language_constraint,
+        prompt_version=prompt.version,
+    )
+
+
+def default_invoke_model(payload: dict[str, Any]) -> dict[str, Any]:
+    weakness = payload["weakness"]
+    evidence = payload["original_evidence"]
+    diversity = payload["diversity_tags"]
+    difficulty = payload["difficulty"] or "medium"
+    scale = diversity["constraint_scale"]
+
+    return {
+        "algorithm_type": _algorithm_type_for_fault(weakness["fault_type"]),
+        "difficulty": difficulty,
+        "narrative_theme": diversity["narrative_theme"],
+        "constraints": _constraints_for_scale(scale),
+        "key_trap": f"Reference the original evidence: {evidence['wrong_line']}",
+        "must_cover": [*weakness["sub_tags"][:2], evidence["correct_approach"]],
+        "must_avoid": ["verbatim reuse of prior tasks", *payload["must_avoid_constraints"]],
+        "verification_spec": {
+            "min_test_cases": 4 if difficulty == "medium" else 5,
+            "must_include_edge_cases": [evidence["failed_test"]],
+            "brute_force_verifiable": True,
+            "brute_force_complexity_limit": "O(n^2)",
+        },
+        "generation_hints": {
+            "solution_approach": evidence["correct_approach"],
+            "common_wrong_approach": evidence["wrong_line"],
+            "distinguishing_test": evidence["failed_test"],
+        },
+        "language_constraint": {
+            "target_languages": ["python"],
+            "language_specific": False,
+        },
+    }
+
+
+def _validate_response(raw: Any) -> GenerationResponse:
+    payload = raw
+    if isinstance(raw, str):
+        payload = json.loads(_normalize_json_text(raw))
+    payload = _normalize_generation_payload(payload)
+
+    try:
+        return GenerationResponse.model_validate(payload)
+    except ValidationError as exc:
+        raise ValueError(f"Synthesize generation response did not match schema: {exc}") from exc
+
+
+def parse_generation_response(raw: Any) -> GenerationResponse:
+    return _validate_response(raw)
+
+
+def _normalize_generation_payload(payload: Any) -> dict[str, Any]:
+    if not isinstance(payload, dict):
+        return payload
+
+    normalized = {
+        key: payload[key]
+        for key in (
+            "algorithm_type",
+            "difficulty",
+            "narrative_theme",
+            "constraints",
+            "key_trap",
+            "must_cover",
+            "must_avoid",
+            "verification_spec",
+            "generation_hints",
+            "language_constraint",
+        )
+        if key in payload
+    }
+    normalized["must_cover"] = _normalize_string_list(payload.get("must_cover"))
+    normalized["must_avoid"] = _normalize_string_list(payload.get("must_avoid"))
+    normalized["constraints"] = _normalize_constraints(payload.get("constraints"))
+    normalized["verification_spec"] = _normalize_verification_spec(payload.get("verification_spec"))
+    normalized["generation_hints"] = _normalize_generation_hints(payload.get("generation_hints"))
+    normalized["language_constraint"] = _normalize_language_constraint(payload.get("language_constraint"))
+    return normalized
+
+
+def _require_evidence_grounding(key_trap: str, original_evidence: dict[str, str]) -> str:
+    if has_concrete_evidence_reference(key_trap, original_evidence):
+        return key_trap
+
+    raise ValueError("key_trap must reference original evidence")
+
+
+def has_concrete_evidence_reference(text: str, original_evidence: dict[str, str]) -> bool:
+    candidate_text = text.lower()
+    wrong_line = original_evidence.get("wrong_line", "")
+    correct_approach = original_evidence.get("correct_approach", "")
+
+    if _contains_quoted_reference(candidate_text, wrong_line):
+        return True
+    if _contains_quoted_reference(candidate_text, correct_approach):
+        return True
+    if _contains_identifier_reference(candidate_text, wrong_line):
+        return True
+    if _contains_phrase_reference(candidate_text, wrong_line):
+        return True
+    if _contains_formula_reference(candidate_text, wrong_line):
+        return True
+    if _contains_cross_field_reference(candidate_text, wrong_line, correct_approach):
+        return True
+
+    return False
+
+
+def _contains_quoted_reference(candidate_text: str, evidence_value: str) -> bool:
+    for quoted_span in re.findall(r"`([^`]+)`", evidence_value):
+        normalized = quoted_span.strip().lower()
+        if normalized and normalized in candidate_text:
+            return True
+    return False
+
+
+def _contains_cross_field_reference(
+    candidate_text: str,
+    wrong_line: str,
+    correct_approach: str,
+) -> bool:
+    wrong_tokens = _normalized_tokens(wrong_line)
+    correct_tokens = _normalized_tokens(correct_approach)
+    if not wrong_tokens or not correct_tokens:
+        return False
+
+    wrong_overlap = sum(1 for token in wrong_tokens if token in candidate_text)
+    correct_overlap = sum(1 for token in correct_tokens if token in candidate_text)
+    return wrong_overlap >= 1 and correct_overlap >= 1
+
+
+def _contains_identifier_reference(candidate_text: str, evidence_value: str) -> bool:
+    identifiers = set(re.findall(r"def\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*\(", evidence_value))
+    identifiers.update(token for token in re.findall(r"\b[a-zA-Z_][a-zA-Z0-9_]*\b", evidence_value) if "_" in token)
+    for identifier in identifiers:
+        normalized = identifier.strip().lower()
+        if len(normalized) >= 4 and normalized not in {"python", "return"} and normalized in candidate_text:
+            return True
+    return False
+
+
+def _contains_phrase_reference(candidate_text: str, evidence_value: str) -> bool:
+    phrases = [
+        "final code block is missing",
+        "code block is missing",
+        "missing code block",
+        "explanation instead of code",
+        "explains the approach instead of returning",
+        "explain the approach instead of returning",
+        "returning a callable solve function",
+        "callable solve function",
+    ]
+    normalized_evidence = evidence_value.lower()
+    if any(phrase in normalized_evidence and phrase in candidate_text for phrase in phrases):
+        return True
+    if "final code block is missing" in normalized_evidence:
+        return (
+            ("explains the approach" in candidate_text or "explanation" in candidate_text)
+            and ("callable solve function" in candidate_text or "returning code" in candidate_text)
+        )
+    return False
+
+
+def _contains_formula_reference(candidate_text: str, evidence_value: str) -> bool:
+    formulas = [match.strip().lower() for match in re.findall(r"return\s+([^\n`|]+)", evidence_value)]
+    if not formulas:
+        return False
+
+    referenced = 0
+    for formula in formulas:
+        normalized = formula.strip()
+        if normalized and normalized in candidate_text:
+            referenced += 1
+
+    return referenced > 0
+
+
+def _normalized_tokens(text: str) -> list[str]:
+    ignored = {
+        "that",
+        "the",
+        "and",
+        "for",
+        "are",
+        "was",
+        "were",
+        "then",
+        "than",
+        "but",
+        "not",
+        "only",
+        "while",
+        "into",
+        "through",
+        "before",
+        "after",
+        "when",
+        "where",
+        "unless",
+        "instead",
+        "each",
+        "should",
+        "with",
+        "from",
+        "used",
+        "line",
+        "test",
+        "check",
+        "segment",
+        "original",
+        "evidence",
+        "failed",
+        "task",
+        "reference",
+        "this",
+        "same",
+        "mistake",
+        "punish",
+        "index",
+        "ending",
+        "last",
+    }
+    return [
+        token
+        for token in re.findall(r"[a-z0-9_\-]{3,}", text.lower())
+        if token not in ignored
+    ]
+
+
+def _algorithm_type_for_fault(fault_type: str) -> str:
+    mapping = {
+        "modeling": "dynamic programming",
+        "implementation": "simulation",
+        "comprehension": "parsing",
+        "edge_handling": "case analysis",
+        "surface": "ad hoc",
+    }
+    return mapping.get(fault_type, "algorithmic reasoning")
+
+
+def _augment_must_cover(weakness: WeaknessEntry, must_cover: list[str]) -> list[str]:
+    augmented = list(must_cover)
+    if "function_name_mismatch" in weakness.sub_tags:
+        _append_if_missing(
+            augmented,
+            "Require a single exact callable entry point named solve(x) for the public harness contract.",
+        )
+    if "missing_code_block" in weakness.sub_tags:
+        _append_if_missing(
+            augmented,
+            "Require executable code output with a callable solve function, not prose or explanation.",
+        )
+    if "markdown_formatting" in weakness.sub_tags:
+        _append_if_missing(
+            augmented,
+            "Require raw executable code output without markdown fences or wrapping delimiters.",
+        )
+    if "syntax_error" in weakness.sub_tags:
+        _append_if_missing(
+            augmented,
+            "Require syntactically complete executable code with a valid solve(x) definition.",
+        )
+    return augmented
+
+
+def _augment_must_avoid(weakness: WeaknessEntry, must_avoid: list[str]) -> list[str]:
+    augmented = list(must_avoid)
+    if "function_name_mismatch" in weakness.sub_tags:
+        _append_if_missing(
+            augmented,
+            "Do not allow alternate public function names such as solve_value, solver, or helper wrappers.",
+        )
+    if "missing_code_block" in weakness.sub_tags:
+        _append_if_missing(
+            augmented,
+            "Do not replace the final code answer with explanation-only text or planning prose.",
+        )
+    if "markdown_formatting" in weakness.sub_tags:
+        _append_if_missing(
+            augmented,
+            "Do not wrap the final answer in markdown fences, backticks, or other formatting delimiters.",
+        )
+    if "syntax_error" in weakness.sub_tags:
+        _append_if_missing(
+            augmented,
+            "Do not emit incomplete code such as missing colons, missing bodies, or malformed function headers.",
+        )
+    return augmented
+
+
+def _append_if_missing(items: list[str], candidate: str) -> None:
+    normalized_candidate = candidate.strip().lower()
+    if not any(item.strip().lower() == normalized_candidate for item in items):
+        items.append(candidate)
+
+
+def _normalize_string_list(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        return [
+            item.strip()
+            for item in re.split(r"[;\n,|]+", value)
+            if item.strip()
+        ]
+    return []
+
+
+def _normalize_constraints(value: Any) -> Any:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str):
+        return value
+
+    numbers = [int(match) for match in re.findall(r"\d+", value)]
+    n_range = [numbers[0], numbers[1]] if len(numbers) >= 2 else [1, 10_000]
+    value_range = [numbers[2], numbers[3]] if len(numbers) >= 4 else [0, 1_000_000]
+    time_match = re.search(r"(\d+\s*[smh]|[\d.]+s)", value, flags=re.IGNORECASE)
+    memory_match = re.search(r"(\d+\s*(?:mb|gb))", value, flags=re.IGNORECASE)
+    return {
+        "n_range": n_range,
+        "value_range": value_range,
+        "time_limit": time_match.group(1).replace(" ", "") if time_match else "1s",
+        "memory_limit": memory_match.group(1).replace(" ", "").upper() if memory_match else "256MB",
+    }
+
+
+def _normalize_verification_spec(value: Any) -> Any:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str):
+        return value
+
+    min_test_match = re.search(r"at least\s+(\d+)\s+tests?", value, flags=re.IGNORECASE)
+    edge_case = ""
+    edge_match = re.search(r"edge case:\s*(.+?)(?:\.|$)", value, flags=re.IGNORECASE)
+    if edge_match:
+        edge_case = edge_match.group(1).strip()
+    complexity_match = re.search(r"(O\([^)]+\))", value)
+    return {
+        "min_test_cases": int(min_test_match.group(1)) if min_test_match else 4,
+        "must_include_edge_cases": [edge_case] if edge_case else [],
+        "brute_force_verifiable": "yes" in value.lower() or "true" in value.lower(),
+        "brute_force_complexity_limit": complexity_match.group(1) if complexity_match else "O(n^2)",
+    }
+
+
+def _normalize_generation_hints(value: Any) -> Any:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str):
+        return value
+
+    solution = _extract_labeled_segment(value, "solution approach")
+    wrong = _extract_labeled_segment(value, "common wrong approach")
+    test = _extract_labeled_segment(value, "distinguishing test")
+    return {
+        "solution_approach": solution or value.strip(),
+        "common_wrong_approach": wrong or value.strip(),
+        "distinguishing_test": test or value.strip(),
+    }
+
+
+def _normalize_language_constraint(value: Any) -> Any:
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, str):
+        return value
+
+    lowered = value.lower()
+    targets: list[str] = []
+    if "python" in lowered:
+        targets.append("python")
+    if "cpp" in lowered or "c++" in lowered:
+        targets.append("cpp")
+    if "java" in lowered:
+        targets.append("java")
+    return {
+        "target_languages": targets or ["python"],
+        "language_specific": len(targets) == 1,
+    }
+
+
+def _extract_labeled_segment(text: str, label: str) -> str:
+    pattern = rf"{re.escape(label)}:\s*(.+?)(?=(?:solution approach|common wrong approach|distinguishing test):|$)"
+    match = re.search(pattern, text, flags=re.IGNORECASE | re.DOTALL)
+    return match.group(1).strip() if match else ""
+
+
+def _constraints_for_scale(scale: str) -> dict[str, Any]:
+    by_scale = {
+        "small": {
+            "n_range": [1, 100],
+            "value_range": [0, 1000],
+            "time_limit": "1s",
+            "memory_limit": "128MB",
+        },
+        "medium": {
+            "n_range": [1, 10_000],
+            "value_range": [0, 1_000_000],
+            "time_limit": "1s",
+            "memory_limit": "256MB",
+        },
+        "large": {
+            "n_range": [1, 1_000_000],
+            "value_range": [0, 1_000_000_000],
+            "time_limit": "2s",
+            "memory_limit": "256MB",
+        },
+    }
+    return by_scale.get(scale, by_scale["medium"])

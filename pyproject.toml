@@ -1,0 +1,35 @@
+[project]
+name = "codemint"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2,<3",
+    "PyYAML>=6,<7",
+    "typer>=0.12",
+    "httpx>=0.27,<1",
+]
+
+[project.scripts]
+codemint = "codemint.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["codemint*"]
+
+[tool.setuptools.package-data]
+codemint = []
+
+[tool.setuptools.data-files]
+"prompts" = [
+    "prompts/*.txt",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

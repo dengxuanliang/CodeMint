@@ -1,0 +1,4 @@
+Version: v1
+
+Build a causal chain that links symptoms, mistakes, and underlying weaknesses.
+

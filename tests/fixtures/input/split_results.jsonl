@@ -1,0 +1,2 @@
+{"task_id": 101, "accepted": false, "metrics": {"latency_ms": 8.7}}
+{"task_id": 102, "accepted": true, "metrics": {"latency_ms": 3.1}}

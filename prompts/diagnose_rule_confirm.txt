@@ -1,0 +1,36 @@
+Version: v1
+
+Confirm whether the rule-based diagnosis is supported by the evidence in the task and outputs.
+
+Return JSON only. Do not wrap the response in markdown or code fences.
+
+Required schema:
+{
+  "task_id": 123,
+  "fault_type": "comprehension|modeling|implementation|edge_handling|surface",
+  "sub_tags": ["short_snake_case_tag"],
+  "severity": "low|medium|high",
+  "description": "one concise confirmation summary",
+  "evidence": {
+    "wrong_line": "the problematic completion snippet",
+    "correct_approach": "the correct reasoning or repair direction",
+    "failed_test": "the failing test or error symptom"
+  },
+  "enriched_labels": {
+    "rule_id": "R001"
+  },
+  "confidence": 0.0,
+  "diagnosis_source": "rule_confirmed_by_model|non_failure",
+  "prompt_version": "v1"
+}
+
+Rules:
+- Use only the allowed enum values exactly as written.
+- `diagnosis_source` must be `rule_confirmed_by_model` for real failures and `non_failure` for success-like records.
+- `evidence` must be an object, never a string.
+- All `enriched_labels` values must be strings.
+- Preserve canonical weakness boundaries in `sub_tags`; do not replace these with ad hoc variants.
+- `function_name_mismatch` means the public entry point or test-harness contract uses a different callable name/signature than the completion exposes.
+- `markdown_formatting` means the completion adds markdown fences or other raw-output formatting noise around otherwise executable code.
+- `missing_code_block` means the completion gives explanation, commentary, or analysis instead of executable code.
+- If the record is actually success-like rather than a failure, return the same schema but with `diagnosis_source` set to `non_failure`.
