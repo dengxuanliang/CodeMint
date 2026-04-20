@@ -60,7 +60,7 @@ def run_item_mode(
     confirm_analyzer: ConfirmAnalyzer | None = None,
     deep_analyzer: DeepAnalyzer | None = None,
 ) -> list[DiagnosisRecord]:
-    active_rules = rules or build_rules()
+    active_rules = build_rules() if rules is None else rules
     resolved_config = config or CodeMintConfig()
     confirmer = confirm_analyzer or _default_confirm_analyzer(resolved_config)
     deep = deep_analyzer or _default_deep_analyzer(resolved_config)

@@ -90,6 +90,32 @@ def test_item_mode_preserves_existing_rows_and_skips_completed_tasks(tmp_path: P
     assert read_jsonl(output_path)[1]["diagnosis_source"] == "model_deep"
 
 
+def test_item_mode_honors_explicit_empty_rules_list(tmp_path: Path) -> None:
+    task = _task(3, "The submission crashes with NameError: helper is not defined")
+    output_path = tmp_path / "item.jsonl"
+    calls: list[tuple[str, int]] = []
+
+    def confirm_analyzer(task: TaskRecord, rule) -> DiagnosisRecord:
+        calls.append(("confirm", task.task_id))
+        return _diagnosis(task.task_id, diagnosis_source="rule_confirmed_by_model")
+
+    def deep_analyzer(task: TaskRecord) -> DiagnosisRecord:
+        calls.append(("deep", task.task_id))
+        return _diagnosis(task.task_id, diagnosis_source="model_deep")
+
+    result = run_item_mode(
+        [task],
+        output_path=output_path,
+        rules=[],
+        confirm_analyzer=confirm_analyzer,
+        deep_analyzer=deep_analyzer,
+    )
+
+    assert calls == [("deep", 3)]
+    assert result[0].diagnosis_source == "model_deep"
+    assert read_jsonl(output_path) == [result[0].model_dump(mode="json")]
+
+
 def _task(task_id: int, completion: str) -> TaskRecord:
     return TaskRecord(
         task_id=task_id,
