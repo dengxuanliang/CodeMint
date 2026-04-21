@@ -1,8 +1,17 @@
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from textwrap import dedent
 
 import pytest
 
 from codemint.config import SynthesizeConfig, load_config
+
+
+def load_config_from_string(config_text: str):
+    with TemporaryDirectory() as directory:
+        path = Path(directory) / "codemint.yaml"
+        path.write_text(dedent(config_text), encoding="utf-8")
+        return load_config(path)
 
 
 def test_load_config_expands_env_vars(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -24,6 +33,19 @@ def test_load_config_parses_typed_defaults(tmp_path: Path) -> None:
     assert config.model.base_url == "https://api.openai.com/v1"
     assert config.aggregate.verification_level == "auto"
     assert config.synthesize.difficulty_levels == ["medium", "hard"]
+
+
+def test_config_supports_clustered_diagnose_mode() -> None:
+    config = load_config_from_string(
+        """
+        diagnose:
+          processing_mode: clustered
+          cluster_representatives: 2
+        """
+    )
+
+    assert config.diagnose.processing_mode == "clustered"
+    assert config.diagnose.cluster_representatives == 2
 
 
 def test_easy_difficulty_is_rejected() -> None:
