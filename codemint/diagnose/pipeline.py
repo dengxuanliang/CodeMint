@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from codemint.config import CodeMintConfig
+from codemint.diagnose.clustered_mode import run_clustered_mode
 from codemint.diagnose.confirm import ConfirmAnalyzer
 from codemint.diagnose.deep import DeepAnalyzer
 from codemint.diagnose.item_mode import run_item_mode
@@ -24,6 +25,15 @@ def run_diagnose(
     processing_mode = getattr(getattr(resolved_config, "diagnose", None), "processing_mode", "item")
     if processing_mode == "item":
         return run_item_mode(
+            tasks,
+            output_path,
+            rules=rules,
+            config=resolved_config,
+            confirm_analyzer=confirm_analyzer,
+            deep_analyzer=deep_analyzer,
+        )
+    if processing_mode == "clustered":
+        return run_clustered_mode(
             tasks,
             output_path,
             rules=rules,

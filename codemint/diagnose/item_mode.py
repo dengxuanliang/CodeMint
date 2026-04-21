@@ -81,6 +81,17 @@ def run_item_mode(
     return existing_diagnoses + new_diagnoses
 
 
+def diagnose_single_task(
+    task: TaskRecord,
+    *,
+    rules: list[DiagnosisRule],
+    confirm_analyzer: ConfirmAnalyzer,
+    deep_analyzer: DeepAnalyzer,
+) -> DiagnosisRecord:
+    engine = RuleEngine(rules)
+    return _diagnose_task(task, engine, confirm_analyzer, deep_analyzer)
+
+
 def _diagnose_task(
     task: TaskRecord,
     engine: RuleEngine,

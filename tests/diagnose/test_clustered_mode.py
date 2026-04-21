@@ -1,7 +1,12 @@
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
+from codemint.config import CodeMintConfig
 from codemint.diagnose.clustering import DiagnoseCluster
 from codemint.models.diagnosis import DiagnosisEvidence, DiagnosisRecord
+from codemint.models.task import TaskRecord
 
 
 def test_propagation_copies_consistent_representative_diagnosis_to_members() -> None:
@@ -64,6 +69,43 @@ def test_propagation_falls_back_for_low_confidence_when_enabled() -> None:
     assert result.fallback_task_ids == [2]
 
 
+def test_run_diagnose_clustered_emits_item_level_records_and_cluster_artifact(tmp_path: Path) -> None:
+    from codemint.diagnose.pipeline import run_diagnose
+
+    tasks = [
+        _task(1, completion="def solve(x):\n    return x + 1"),
+        _task(2, completion="def solve(x):\n    return x + 1"),
+        _task(3, completion="def solve_value(x):\n    return x + 1"),
+    ]
+    config = CodeMintConfig.model_validate(
+        {"diagnose": {"processing_mode": "clustered", "cluster_representatives": 1}}
+    )
+    calls: list[int] = []
+
+    def deep_analyzer(task: TaskRecord) -> DiagnosisRecord:
+        calls.append(task.task_id)
+        return _diagnosis(task.task_id, sub_tags=["logic_error"], confidence=0.9)
+
+    output_path = tmp_path / "diagnoses.jsonl"
+
+    results = run_diagnose(
+        tasks,
+        output_path,
+        rules=[],
+        config=config,
+        deep_analyzer=deep_analyzer,
+    )
+
+    assert [result.task_id for result in results] == [1, 2, 3]
+    assert calls == [1, 3]
+    assert results[1].enriched_labels["diagnosis_origin"] == "propagated"
+    assert results[1].enriched_labels["cluster_id"] == "cluster-0001"
+
+    clusters = json.loads((tmp_path / "diagnose_clusters.json").read_text(encoding="utf-8"))
+    assert [cluster["member_task_ids"] for cluster in clusters["clusters"]] == [[1, 2], [3]]
+    assert clusters["summary"]["cluster_count"] == 2
+
+
 def _cluster(
     member_task_ids: list[int],
     *,
@@ -99,4 +141,18 @@ def _diagnosis(
         confidence=confidence,
         diagnosis_source="model_deep",
         prompt_version="test-v1",
+    )
+
+
+def _task(task_id: int, *, completion: str) -> TaskRecord:
+    return TaskRecord(
+        task_id=task_id,
+        content="Implement solve(x).",
+        canonical_solution="def solve(x):\n    return x + 1",
+        completion=completion,
+        test_code="assert solve(1) == 2",
+        labels={},
+        accepted=False,
+        metrics={},
+        extra={},
     )
