@@ -250,13 +250,17 @@ def _selected_stages(start_from: RunStage) -> tuple[RunStage, ...]:
 def _error_count(path: Path) -> int:
     if not path.exists():
         return 0
-    return len(read_jsonl(path))
+    return sum(1 for row in read_jsonl(path) if _is_error_event(row))
 
 
 def _count_stage_errors(path: Path, stage: str) -> int:
     if not path.exists():
         return 0
-    return sum(1 for row in read_jsonl(path) if row.get("stage") == stage)
+    return sum(
+        1
+        for row in read_jsonl(path)
+        if row.get("stage") == stage and _is_error_event(row)
+    )
 
 
 def _spec_counts_by_weakness(specs: list[SpecRecord]) -> dict[str, int]:
@@ -320,7 +324,7 @@ def _synthesize_failure_reasons_by_weakness(path: Path) -> dict[str, list[str]]:
         return {}
     reasons: dict[str, list[str]] = {}
     for row in read_jsonl(path):
-        if row.get("stage") != "synthesize":
+        if row.get("stage") != "synthesize" or not _is_error_event(row):
             continue
         weakness = str(row.get("weakness", "unknown"))
         reason = str(row.get("message", ""))
@@ -350,6 +354,10 @@ def _synthesize_fallbacks_by_weakness(path: Path) -> dict[str, int]:
         weakness = str(row.get("weakness", "unknown"))
         counts[weakness] = counts.get(weakness, 0) + 1
     return counts
+
+
+def _is_error_event(row: dict) -> bool:
+    return row.get("event_type") not in {"fallback_used"}
 
 
 

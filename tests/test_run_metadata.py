@@ -346,8 +346,11 @@ def test_run_metadata_tracks_successful_synthesize_fallback_usage(tmp_path: Path
     )
 
     metadata = json.loads((run_dir / "run_metadata.json").read_text(encoding="utf-8"))
+    assert metadata["summary"]["errors"] == 0
+    assert metadata["summary"]["synthesize_failures"] == 0
     assert metadata["summary"]["synthesize_fallbacks"] == 1
     assert metadata["summary"]["synthesize_fallbacks_by_weakness"] == {"missing_code_block": 1}
+    assert metadata["summary"]["synthesize_failure_reasons_by_weakness"] == {}
 
 
 def test_run_metadata_attempted_weaknesses_deduplicate_canonical_keys_within_top_n(tmp_path: Path) -> None:
