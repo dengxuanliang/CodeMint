@@ -42,7 +42,13 @@ Rules:
 - `must_cover` and `must_avoid` must be arrays of strings, never a single string.
 - `difficulty` must be exactly `medium` or `hard`.
 - `key_trap` must concretely reference the supplied original evidence instead of generic wording.
+- Always treat `weakness.sub_tags[0]` as the primary contract to encode in `must_cover` and `must_avoid`.
+- If `repair_context.missing_contracts` is present, you must explicitly satisfy every missing contract in the regenerated answer.
 - If the weakness is `function_name_mismatch`, `must_cover` must require one exact callable public entry point and `must_avoid` must forbid alternate public function names.
+- If the weakness is `function_name_mismatch`, `key_trap` should mention the concrete wrong callable from the original evidence when available, such as `solve_value` or `solver`.
 - If the weakness is `markdown_formatting`, `must_cover` must require raw executable output and `must_avoid` must forbid markdown fences, backticks, or wrapping delimiters.
+- If the weakness is `markdown_formatting`, `key_trap` should mention fenced or wrapped output from the original evidence when available.
 - If the weakness is about missing code output, `must_cover` must explicitly require executable code output and a callable solution entry point.
 - If the weakness is about missing code output, `must_avoid` must explicitly forbid explanation-only or prose-only final answers.
+- If the weakness is `syntax_error`, `must_cover` must require syntactically complete executable code and `must_avoid` must forbid malformed or partial code.
+- Prefer direct contract language in `must_cover` and `must_avoid` over vague quality statements like "implementation correctness" or "interface consistency".

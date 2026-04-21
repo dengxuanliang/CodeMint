@@ -506,6 +506,72 @@ def test_function_name_mismatch_local_feasibility_rejects_spec_without_exact_ent
     assert "exact public entry-point" in result.reason
 
 
+def test_function_name_mismatch_local_feasibility_accepts_semantic_equivalent_contract_language() -> None:
+    from codemint.synthesize.feasibility import check_feasibility
+
+    spec = SpecRecord(
+        spec_id="spec-0100a",
+        target_weakness=TargetWeakness(
+            fault_type="implementation",
+            sub_tags=["function_name_mismatch"],
+            root_cause="Function name mismatches break execution.",
+            capability_cliff="Strict harnesses require an exact entry point.",
+        ),
+        problem_spec=ProblemSpec(
+            algorithm_type="simulation",
+            difficulty="medium",
+            narrative_theme="warehouses",
+            constraints=ProblemConstraints(
+                n_range=[1, 100],
+                value_range=[0, 1000],
+                time_limit="1s",
+                memory_limit="256MB",
+            ),
+            key_trap="The trap fails when the harness cannot call `solve` because the original evidence exposed `solve_value`.",
+            must_cover=[
+                "Require one public function named solve for the harness entry point.",
+                "The checker must call the exact solver entrypoint directly.",
+            ],
+            must_avoid=[
+                "Forbid helper entrypoint aliases like solve_value or solver.",
+                "Do not rename the public callable.",
+            ],
+        ),
+        verification_spec=VerificationSpec(
+            min_test_cases=4,
+            must_include_edge_cases=["single value input"],
+            brute_force_verifiable=True,
+            brute_force_complexity_limit="O(n^2)",
+        ),
+        diversity_tags=DiversityTags(
+            narrative_theme="warehouses",
+            data_structure="array",
+            constraint_scale="small",
+        ),
+        generation_hints=GenerationHints(
+            solution_approach="Expose a single public function named solve.",
+            common_wrong_approach="Expose helper aliases like solve_value or solver.",
+            distinguishing_test="Call solve() directly from the harness.",
+        ),
+        language_constraint=LanguageConstraint(
+            target_languages=["python"],
+            language_specific=False,
+        ),
+        prompt_version="v1",
+    )
+
+    result = check_feasibility(
+        spec,
+        original_evidence={
+            "wrong_line": "def solve_value(x):",
+            "correct_approach": "Define the exact solve(x) entry point expected by the harness.",
+            "failed_test": "NameError: name 'solve' is not defined",
+        },
+    )
+
+    assert result.accepted is True
+
+
 def test_markdown_formatting_local_feasibility_rejects_spec_without_raw_output_rules() -> None:
     from codemint.synthesize.feasibility import check_feasibility
 
@@ -567,6 +633,72 @@ def test_markdown_formatting_local_feasibility_rejects_spec_without_raw_output_r
     assert "raw executable output" in result.reason
 
 
+def test_markdown_formatting_local_feasibility_accepts_semantic_equivalent_contract_language() -> None:
+    from codemint.synthesize.feasibility import check_feasibility
+
+    spec = SpecRecord(
+        spec_id="spec-0101a",
+        target_weakness=TargetWeakness(
+            fault_type="surface",
+            sub_tags=["markdown_formatting"],
+            root_cause="Markdown fences wrap otherwise executable code.",
+            capability_cliff="Raw-output consumers fail when fence markers are present.",
+        ),
+        problem_spec=ProblemSpec(
+            algorithm_type="simulation",
+            difficulty="medium",
+            narrative_theme="warehouses",
+            constraints=ProblemConstraints(
+                n_range=[1, 100],
+                value_range=[0, 1000],
+                time_limit="1s",
+                memory_limit="256MB",
+            ),
+            key_trap="The trap reproduces the original ```python fenced solve(x) output instead of raw executable code.",
+            must_cover=[
+                "Return plain executable program text only.",
+                "The harness expects raw code output.",
+            ],
+            must_avoid=[
+                "Do not wrap answers in markdown code fences.",
+                "Avoid backticks or formatting delimiters around the final code.",
+            ],
+        ),
+        verification_spec=VerificationSpec(
+            min_test_cases=4,
+            must_include_edge_cases=["single value input"],
+            brute_force_verifiable=True,
+            brute_force_complexity_limit="O(n^2)",
+        ),
+        diversity_tags=DiversityTags(
+            narrative_theme="warehouses",
+            data_structure="array",
+            constraint_scale="small",
+        ),
+        generation_hints=GenerationHints(
+            solution_approach="Return the raw implementation directly.",
+            common_wrong_approach="Wrap the answer in markdown fences.",
+            distinguishing_test="Reject answers containing ``` or stray backticks.",
+        ),
+        language_constraint=LanguageConstraint(
+            target_languages=["python"],
+            language_specific=False,
+        ),
+        prompt_version="v1",
+    )
+
+    result = check_feasibility(
+        spec,
+        original_evidence={
+            "wrong_line": "```python\ndef solve(x):\n    return x + 1\n```",
+            "correct_approach": "Return raw executable code without markdown fences.",
+            "failed_test": "SyntaxError: invalid syntax",
+        },
+    )
+
+    assert result.accepted is True
+
+
 def test_syntax_error_local_feasibility_rejects_spec_without_syntactic_completeness_rules() -> None:
     from codemint.synthesize.feasibility import check_feasibility
 
@@ -626,6 +758,72 @@ def test_syntax_error_local_feasibility_rejects_spec_without_syntactic_completen
 
     assert result.accepted is False
     assert "syntactically complete executable code" in result.reason
+
+
+def test_syntax_error_local_feasibility_accepts_semantic_equivalent_contract_language() -> None:
+    from codemint.synthesize.feasibility import check_feasibility
+
+    spec = SpecRecord(
+        spec_id="spec-0102a",
+        target_weakness=TargetWeakness(
+            fault_type="implementation",
+            sub_tags=["syntax_error"],
+            root_cause="The generated code is syntactically incomplete.",
+            capability_cliff="Execution fails before semantic correctness is even tested.",
+        ),
+        problem_spec=ProblemSpec(
+            algorithm_type="simulation",
+            difficulty="medium",
+            narrative_theme="warehouses",
+            constraints=ProblemConstraints(
+                n_range=[1, 100],
+                value_range=[0, 1000],
+                time_limit="1s",
+                memory_limit="256MB",
+            ),
+            key_trap="The trap reproduces the original incomplete `def solve(x)` output without a valid body.",
+            must_cover=[
+                "Require parseable and syntactically valid executable code.",
+                "The emitted function definition must be complete.",
+            ],
+            must_avoid=[
+                "Do not omit required punctuation like colons.",
+                "Avoid malformed or partial function headers.",
+            ],
+        ),
+        verification_spec=VerificationSpec(
+            min_test_cases=4,
+            must_include_edge_cases=["single value input"],
+            brute_force_verifiable=True,
+            brute_force_complexity_limit="O(n^2)",
+        ),
+        diversity_tags=DiversityTags(
+            narrative_theme="warehouses",
+            data_structure="array",
+            constraint_scale="small",
+        ),
+        generation_hints=GenerationHints(
+            solution_approach="Return the implementation directly.",
+            common_wrong_approach="Emit incomplete code that cannot parse.",
+            distinguishing_test="Reject code with missing colons or missing bodies.",
+        ),
+        language_constraint=LanguageConstraint(
+            target_languages=["python"],
+            language_specific=False,
+        ),
+        prompt_version="v1",
+    )
+
+    result = check_feasibility(
+        spec,
+        original_evidence={
+            "wrong_line": "def solve(x)",
+            "correct_approach": "Return syntactically complete executable code with a valid solve(x) definition.",
+            "failed_test": "SyntaxError: expected ':'",
+        },
+    )
+
+    assert result.accepted is True
 
 
 def test_non_executable_code_local_feasibility_rejects_spec_without_output_presence_rules() -> None:
@@ -837,6 +1035,10 @@ def test_generate_with_regeneration_includes_structured_repair_mode_for_contract
             return FeasibilityResult(
                 accepted=False,
                 reason="Function-name mismatch weakness spec must require a single exact public entry-point contract and forbid alternate public function names.",
+                missing_contracts=[
+                    "requires_exact_public_entry_point",
+                    "forbids_alternate_public_names",
+                ],
             )
         return FeasibilityResult(accepted=True, reason="ok")
 
@@ -864,6 +1066,103 @@ def test_generate_with_regeneration_includes_structured_repair_mode_for_contract
     assert len(seen_payloads) == 2
     assert seen_payloads[1]["repair_context"]["mode"] == "contract_mismatch"
     assert "exact public entry-point" in seen_payloads[1]["repair_context"]["reason"]
+
+
+def test_generate_with_regeneration_includes_missing_contracts_in_retry_payload() -> None:
+    from codemint.synthesize.feasibility import FeasibilityResult
+    from codemint.synthesize.pipeline import _generate_with_regeneration
+
+    weakness = WeaknessEntry(
+        rank=1,
+        fault_type="implementation",
+        sub_tags=["function_name_mismatch"],
+        frequency=1,
+        sample_task_ids=[201],
+        trainability=0.6,
+        collective_diagnosis=CollectiveDiagnosis(
+            refined_root_cause="Function name mismatches break execution.",
+            capability_cliff="Strict harnesses require the exact public entry point.",
+            misdiagnosed_ids=[],
+            misdiagnosis_corrections={},
+            cluster_coherence=0.94,
+        ),
+    )
+    seen_payloads: list[dict] = []
+
+    def invoke_model(payload: dict) -> dict:
+        seen_payloads.append(payload)
+        return {
+            "algorithm_type": "simulation",
+            "difficulty": "medium",
+            "narrative_theme": "warehouses",
+            "constraints": {
+                "n_range": [1, 100],
+                "value_range": [0, 1000],
+                "time_limit": "1s",
+                "memory_limit": "256MB",
+            },
+            "key_trap": "The trap fails when `solve_value` is exposed instead of the required `solve` entry point.",
+            "must_cover": ["exact callable entry point solve(x)"],
+            "must_avoid": ["alternate public function names"],
+            "verification_spec": {
+                "min_test_cases": 4,
+                "must_include_edge_cases": ["single value input"],
+                "brute_force_verifiable": True,
+                "brute_force_complexity_limit": "O(n^2)",
+            },
+            "generation_hints": {
+                "solution_approach": "Implement the exact solve(x) entry point.",
+                "common_wrong_approach": "Expose solve_value(x) instead of solve(x).",
+                "distinguishing_test": "Call solve() directly from the harness.",
+            },
+            "language_constraint": {
+                "target_languages": ["python"],
+                "language_specific": False,
+            },
+        }
+
+    feasibility_calls = {"count": 0}
+
+    def feasibility_check(payload: dict) -> FeasibilityResult:
+        feasibility_calls["count"] += 1
+        if feasibility_calls["count"] == 1:
+            return FeasibilityResult(
+                accepted=False,
+                reason="Function-name mismatch weakness spec must require a single exact public entry-point contract and forbid alternate public function names.",
+                missing_contracts=[
+                    "requires_exact_public_entry_point",
+                    "forbids_alternate_public_names",
+                ],
+            )
+        return FeasibilityResult(accepted=True, reason="ok")
+
+    _generate_with_regeneration(
+        weakness,
+        diversity_tags=DiversityTags(
+            narrative_theme="warehouses",
+            data_structure="array",
+            constraint_scale="small",
+        ),
+        spec_index=1,
+        difficulty="medium",
+        invoke_model=invoke_model,
+        feasibility_check=feasibility_check,
+        original_evidence={
+            "wrong_line": "def solve_value(x):",
+            "correct_approach": "Define the exact solve(x) entry point expected by the harness.",
+            "failed_test": "NameError: name 'solve' is not defined",
+        },
+        overlap_threshold=0.5,
+        existing_specs=[],
+        max_attempts=2,
+    )
+
+    assert len(seen_payloads) == 2
+    assert seen_payloads[1]["repair_context"]["mode"] == "contract_mismatch"
+    assert seen_payloads[1]["repair_context"]["missing_contracts"] == [
+        "requires_exact_public_entry_point",
+        "forbids_alternate_public_names",
+    ]
 
 
 def test_generate_with_regeneration_includes_structured_repair_mode_for_raw_output_and_diversity() -> None:

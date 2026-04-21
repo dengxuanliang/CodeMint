@@ -234,6 +234,7 @@ def _generate_with_regeneration(
             repair_context = {
                 "mode": _repair_mode_for_feasibility_reason(feasibility_result.reason),
                 "reason": feasibility_result.reason,
+                "missing_contracts": list(feasibility_result.missing_contracts),
             }
             must_avoid_constraints.append(f"repair feasibility issue: {feasibility_result.reason}")
 
