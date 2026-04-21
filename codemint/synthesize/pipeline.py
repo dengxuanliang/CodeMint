@@ -174,6 +174,17 @@ def _generate_or_log_failure(
                 feasibility_check=feasibility_check,
             )
             if feasibility_result.accepted:
+                append_jsonl(
+                    output_path.parent / "errors.jsonl",
+                    [
+                        {
+                            "stage": "synthesize",
+                            "weakness": weakness_key(weakness),
+                            "event_type": "fallback_used",
+                            "message": "deterministic fallback spec accepted",
+                        }
+                    ],
+                )
                 return fallback_spec
         append_jsonl(
             output_path.parent / "errors.jsonl",

@@ -1444,6 +1444,9 @@ def test_generate_or_log_failure_uses_builtin_fallback_for_missing_code_block(tm
     assert spec is not None
     assert spec.target_weakness.sub_tags == ["missing_code_block"]
     assert any("executable code" in item.lower() for item in spec.problem_spec.must_cover)
+    errors = read_jsonl(tmp_path / "errors.jsonl")
+    assert errors[-1]["event_type"] == "fallback_used"
+    assert errors[-1]["weakness"] == "missing_code_block"
 
 
 def test_generate_or_log_failure_uses_builtin_fallback_for_syntax_error(tmp_path: Path) -> None:

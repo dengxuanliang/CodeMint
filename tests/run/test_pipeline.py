@@ -85,6 +85,8 @@ def test_run_skips_complete_stage_and_gap_fills_incomplete_stage(tmp_path: Path)
         "attempted_weaknesses": ["stub"],
         "covered_weaknesses": ["stub"],
         "weaknesses_without_specs": [],
+        "synthesize_fallbacks": 0,
+        "synthesize_fallbacks_by_weakness": {},
         "synthesize_failure_reasons_by_weakness": {},
     }
     assert summary["elapsed_seconds"] >= 0

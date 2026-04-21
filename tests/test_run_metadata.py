@@ -77,6 +77,8 @@ def test_run_metadata_captures_prompt_versions_and_summary(tmp_path: Path) -> No
         "attempted_weaknesses": ["loop_bound"],
         "covered_weaknesses": ["loop_bound"],
         "weaknesses_without_specs": [],
+        "synthesize_fallbacks": 0,
+        "synthesize_fallbacks_by_weakness": {},
         "synthesize_failure_reasons_by_weakness": {},
     }
     assert metadata["summary"]["elapsed_seconds"] >= 0
@@ -156,6 +158,8 @@ def test_run_metadata_tracks_non_failures_and_synthesize_stage_errors(tmp_path: 
     assert metadata["summary"]["attempted_weaknesses"] == ["loop_bound"]
     assert metadata["summary"]["covered_weaknesses"] == ["loop_bound"]
     assert metadata["summary"]["weaknesses_without_specs"] == []
+    assert metadata["summary"]["synthesize_fallbacks"] == 0
+    assert metadata["summary"]["synthesize_fallbacks_by_weakness"] == {}
     assert metadata["summary"]["synthesize_failure_reasons_by_weakness"] == {
         "loop_bound": ["boom"]
     }
@@ -270,6 +274,80 @@ def test_run_metadata_missing_and_covered_weaknesses_are_limited_to_attempted_to
     assert metadata["summary"]["attempted_weaknesses"] == ["loop_bound", "missing_code"]
     assert metadata["summary"]["covered_weaknesses"] == ["loop_bound"]
     assert metadata["summary"]["weaknesses_without_specs"] == ["missing_code"]
+
+
+def test_run_metadata_deduplicates_covered_weaknesses_preserving_attempted_order(tmp_path: Path) -> None:
+    input_path = tmp_path / "tasks.jsonl"
+    input_path.write_text(
+        "\n".join(
+            [
+                '{"task_id": 1, "content": "task one", "canonical_solution": "ok", "completion": "bad one", "test_code": "assert True", "labels": {}, "accepted": false, "metrics": {}, "extra": {}}',
+                '{"task_id": 2, "content": "task two", "canonical_solution": "ok", "completion": "bad two", "test_code": "assert True", "labels": {}, "accepted": false, "metrics": {}, "extra": {}}',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    output_root = tmp_path / "artifacts"
+
+    run_pipeline(
+        input_paths=[input_path],
+        output_root=output_root,
+        run_id="run-008",
+        config=CodeMintConfig.model_validate({"model": {"analysis_model": "gpt-4.1-mini"}}),
+        run_diagnose_stage=lambda tasks, output_path: _write_diagnoses(output_path),
+        run_aggregate_stage=lambda diagnoses, output_path: _write_duplicate_covered_weakness_report(output_path),
+        run_synthesize_stage=lambda weakness_report, output_path: _write_specs(
+            output_path,
+            [
+                _spec("spec-0015", weakness="missing_code_block"),
+                _spec("spec-0016", weakness="function_name_mismatch"),
+                _spec("spec-0017", weakness="function_name_mismatch"),
+            ],
+        ),
+    )
+
+    metadata = json.loads((output_root / "run-008" / "run_metadata.json").read_text(encoding="utf-8"))
+    assert metadata["summary"]["attempted_weaknesses"] == ["function_name_mismatch", "missing_code_block"]
+    assert metadata["summary"]["covered_weaknesses"] == ["function_name_mismatch", "missing_code_block"]
+
+
+def test_run_metadata_tracks_successful_synthesize_fallback_usage(tmp_path: Path) -> None:
+    input_path = tmp_path / "tasks.jsonl"
+    input_path.write_text(
+        '{"task_id": 1, "content": "task one", "canonical_solution": "ok", "completion": "bad one", "test_code": "assert True", "labels": {}, "accepted": false, "metrics": {}, "extra": {}}\n',
+        encoding="utf-8",
+    )
+    output_root = tmp_path / "artifacts"
+    run_dir = output_root / "run-009"
+    run_dir.mkdir(parents=True)
+    append_jsonl(
+        run_dir / "errors.jsonl",
+        [
+            {
+                "stage": "synthesize",
+                "weakness": "missing_code_block",
+                "event_type": "fallback_used",
+                "message": "deterministic missing code fallback",
+            }
+        ],
+    )
+
+    run_pipeline(
+        input_paths=[input_path],
+        output_root=output_root,
+        run_id="run-009",
+        config=CodeMintConfig.model_validate({"model": {"analysis_model": "gpt-4.1-mini"}}),
+        run_diagnose_stage=lambda tasks, output_path: _write_diagnoses(output_path),
+        run_aggregate_stage=lambda diagnoses, output_path: _write_duplicate_covered_weakness_report(output_path),
+        run_synthesize_stage=lambda weakness_report, output_path: _write_specs(
+            output_path, [_spec("spec-0018", weakness="missing_code_block")]
+        ),
+    )
+
+    metadata = json.loads((run_dir / "run_metadata.json").read_text(encoding="utf-8"))
+    assert metadata["summary"]["synthesize_fallbacks"] == 1
+    assert metadata["summary"]["synthesize_fallbacks_by_weakness"] == {"missing_code_block": 1}
 
 
 def test_run_metadata_attempted_weaknesses_deduplicate_canonical_keys_within_top_n(tmp_path: Path) -> None:
@@ -568,14 +646,79 @@ def _write_duplicate_key_weakness_report(output_path: Path) -> WeaknessReport:
     return _write_report(output_path, report)
 
 
-def _spec(spec_id: str) -> SpecRecord:
+def _write_duplicate_covered_weakness_report(output_path: Path) -> WeaknessReport:
+    report = WeaknessReport(
+        weaknesses=[
+            WeaknessEntry(
+                rank=1,
+                fault_type="implementation",
+                sub_tags=["function_name_mismatch"],
+                frequency=6,
+                sample_task_ids=[1, 2, 3],
+                trainability=0.9,
+                collective_diagnosis=CollectiveDiagnosis(
+                    refined_root_cause="Wrong public entry point is exposed.",
+                    capability_cliff="Harness requires exact solve().",
+                    misdiagnosed_ids=[],
+                    misdiagnosis_corrections={},
+                    cluster_coherence=0.95,
+                ),
+            ),
+            WeaknessEntry(
+                rank=2,
+                fault_type="surface",
+                sub_tags=["function_name_mismatch"],
+                frequency=5,
+                sample_task_ids=[4, 5],
+                trainability=0.7,
+                collective_diagnosis=CollectiveDiagnosis(
+                    refined_root_cause="Same canonical weakness repeated.",
+                    capability_cliff="Alternate labels collapse to same weakness.",
+                    misdiagnosed_ids=[],
+                    misdiagnosis_corrections={},
+                    cluster_coherence=0.9,
+                ),
+            ),
+            WeaknessEntry(
+                rank=3,
+                fault_type="implementation",
+                sub_tags=["missing_code_block"],
+                frequency=4,
+                sample_task_ids=[6],
+                trainability=0.8,
+                collective_diagnosis=CollectiveDiagnosis(
+                    refined_root_cause="Executable code is omitted.",
+                    capability_cliff="Direct code emission fails.",
+                    misdiagnosed_ids=[],
+                    misdiagnosis_corrections={},
+                    cluster_coherence=0.93,
+                ),
+            ),
+        ],
+        rankings=RankingSet(by_frequency=[1, 2, 3], by_difficulty=[1, 2, 3], by_trainability=[1, 3, 2]),
+        causal_chains=[
+            CausalChain(
+                root="function_name_mismatch",
+                downstream=["missing_code_block"],
+                training_priority="high",
+            )
+        ],
+        tag_mappings={
+            "function_name_mismatch": "function_name_mismatch",
+            "missing_code_block": "missing_code_block",
+        },
+    )
+    return _write_report(output_path, report)
+
+
+def _spec(spec_id: str, weakness: str = "loop_bound") -> SpecRecord:
     return SpecRecord(
         spec_id=spec_id,
         target_weakness=TargetWeakness(
             fault_type="implementation",
-            sub_tags=["loop_bound"],
-            root_cause="Loop bounds drift.",
-            capability_cliff="Longer inputs expose it.",
+            sub_tags=[weakness],
+            root_cause=f"{weakness} root cause.",
+            capability_cliff=f"{weakness} capability cliff.",
         ),
         problem_spec=ProblemSpec(
             algorithm_type="two pointers",
@@ -588,7 +731,7 @@ def _spec(spec_id: str) -> SpecRecord:
                 memory_limit="256MB",
             ),
             key_trap="bounds",
-            must_cover=["loop_bound"],
+            must_cover=[weakness],
             must_avoid=["duplicate"],
         ),
         verification_spec=VerificationSpec(

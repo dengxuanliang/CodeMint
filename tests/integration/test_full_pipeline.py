@@ -86,6 +86,8 @@ def test_full_pipeline_produces_all_expected_artifacts(tmp_path: Path) -> None:
         "attempted_weaknesses": ["state_tracking"],
         "covered_weaknesses": ["state_tracking"],
         "weaknesses_without_specs": [],
+        "synthesize_fallbacks": 0,
+        "synthesize_fallbacks_by_weakness": {},
         "synthesize_failure_reasons_by_weakness": {},
     }
     assert summary["elapsed_seconds"] >= 0

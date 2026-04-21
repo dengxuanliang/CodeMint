@@ -236,6 +236,8 @@ def _build_summary(
         attempted_weaknesses=attempted_weaknesses,
         covered_weaknesses=covered_weaknesses,
         weaknesses_without_specs=_weaknesses_without_specs(report, specs, attempted_weaknesses),
+        synthesize_fallbacks=_count_synthesize_fallbacks(errors_path),
+        synthesize_fallbacks_by_weakness=_synthesize_fallbacks_by_weakness(errors_path),
         synthesize_failure_reasons_by_weakness=_synthesize_failure_reasons_by_weakness(errors_path),
     )
 
@@ -268,7 +270,15 @@ def _spec_counts_by_weakness(specs: list[SpecRecord]) -> dict[str, int]:
 def _attempted_weaknesses(report: WeaknessReport, top_n: int) -> list[str]:
     if not report.weaknesses or top_n <= 0:
         return []
-    return [weakness_key(weakness) for weakness in select_top_weaknesses(report.weaknesses, top_n)]
+    attempted: list[str] = []
+    seen: set[str] = set()
+    for weakness in select_top_weaknesses(report.weaknesses, top_n):
+        key = weakness_key(weakness)
+        if key in seen:
+            continue
+        seen.add(key)
+        attempted.append(key)
+    return attempted
 
 
 def _covered_weaknesses(
@@ -277,13 +287,7 @@ def _covered_weaknesses(
     attempted_weaknesses: list[str],
 ) -> list[str]:
     covered = set(_spec_counts_by_weakness(specs))
-    attempted = set(attempted_weaknesses)
-    return [
-        weakness.sub_tags[0] if weakness.sub_tags else "unknown"
-        for weakness in report.weaknesses
-        if (weakness.sub_tags[0] if weakness.sub_tags else "unknown") in covered
-        and (weakness.sub_tags[0] if weakness.sub_tags else "unknown") in attempted
-    ]
+    return [weakness for weakness in attempted_weaknesses if weakness in covered]
 
 
 def _weaknesses_without_specs(
@@ -324,6 +328,28 @@ def _synthesize_failure_reasons_by_weakness(path: Path) -> dict[str, list[str]]:
         if reason and reason not in reasons[weakness]:
             reasons[weakness].append(reason)
     return reasons
+
+
+def _count_synthesize_fallbacks(path: Path) -> int:
+    if not path.exists():
+        return 0
+    return sum(
+        1
+        for row in read_jsonl(path)
+        if row.get("stage") == "synthesize" and row.get("event_type") == "fallback_used"
+    )
+
+
+def _synthesize_fallbacks_by_weakness(path: Path) -> dict[str, int]:
+    if not path.exists():
+        return {}
+    counts: dict[str, int] = {}
+    for row in read_jsonl(path):
+        if row.get("stage") != "synthesize" or row.get("event_type") != "fallback_used":
+            continue
+        weakness = str(row.get("weakness", "unknown"))
+        counts[weakness] = counts.get(weakness, 0) + 1
+    return counts
 
 
 

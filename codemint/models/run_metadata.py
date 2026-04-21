@@ -31,6 +31,8 @@ class RunSummary(StrictModel):
     attempted_weaknesses: list[str] = []
     covered_weaknesses: list[str] = []
     weaknesses_without_specs: list[str]
+    synthesize_fallbacks: int = 0
+    synthesize_fallbacks_by_weakness: dict[str, int] = {}
     synthesize_failure_reasons_by_weakness: dict[str, list[str]] = {}
 
 

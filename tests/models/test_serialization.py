@@ -422,6 +422,8 @@ def test_run_metadata_round_trip() -> None:
                 "attempted_weaknesses": ["state_tracking", "off_by_one"],
                 "covered_weaknesses": ["state_tracking", "off_by_one"],
                 "weaknesses_without_specs": [],
+                "synthesize_fallbacks": 0,
+                "synthesize_fallbacks_by_weakness": {},
                 "synthesize_failure_reasons_by_weakness": {},
             },
         }
