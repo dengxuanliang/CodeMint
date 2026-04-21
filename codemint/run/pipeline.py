@@ -156,8 +156,10 @@ def run_pipeline(
             specs,
             input_count=len(tasks),
             errors_path=run_dir / "errors.jsonl",
+            clusters_path=run_dir / "diagnose_clusters.json",
             elapsed_seconds=time.perf_counter() - started_at,
             top_n=resolved_config.synthesize.top_n,
+            diagnose_processing_mode=resolved_config.diagnose.processing_mode,
         ),
     )
     _write_run_metadata(artifacts["run_metadata"], metadata)
@@ -211,11 +213,14 @@ def _build_summary(
     *,
     input_count: int,
     errors_path: Path,
+    clusters_path: Path,
     elapsed_seconds: float,
     top_n: int,
+    diagnose_processing_mode: str,
 ) -> RunSummary:
     attempted_weaknesses = _attempted_weaknesses(report, top_n)
     covered_weaknesses = _covered_weaknesses(report, specs, attempted_weaknesses)
+    clustered_stats = _clustered_diagnose_stats(clusters_path, input_count, diagnose_processing_mode)
     return RunSummary(
         diagnosed=len(diagnoses),
         rule_screened=sum(1 for diagnosis in diagnoses if diagnosis.diagnosis_source != "model_deep"),
@@ -233,6 +238,12 @@ def _build_summary(
         covered_weaknesses=covered_weaknesses,
         weaknesses_without_specs=_weaknesses_without_specs(report, specs, attempted_weaknesses),
         synthesize_failure_reasons_by_weakness=_synthesize_failure_reasons_by_weakness(errors_path),
+        diagnose_processing_mode=diagnose_processing_mode,
+        cluster_count=clustered_stats["cluster_count"],
+        compression_ratio=clustered_stats["compression_ratio"],
+        representative_diagnoses=clustered_stats["representative_diagnoses"],
+        propagated_diagnoses=clustered_stats["propagated_diagnoses"],
+        fallback_item_diagnoses=clustered_stats["fallback_item_diagnoses"],
     )
 
 
@@ -323,6 +334,37 @@ def _synthesize_failure_reasons_by_weakness(path: Path) -> dict[str, list[str]]:
         if reason and reason not in reasons[weakness]:
             reasons[weakness].append(reason)
     return reasons
+
+
+def _clustered_diagnose_stats(
+    path: Path,
+    input_count: int,
+    processing_mode: str,
+) -> dict[str, int | float]:
+    default = {
+        "cluster_count": 0,
+        "compression_ratio": 1.0,
+        "representative_diagnoses": 0,
+        "propagated_diagnoses": 0,
+        "fallback_item_diagnoses": 0,
+    }
+    if processing_mode != "clustered" or not path.exists():
+        return default
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    clusters = payload.get("clusters", [])
+    cluster_count = len(clusters)
+    representative_diagnoses = sum(len(cluster.get("representative_task_ids", [])) for cluster in clusters)
+    propagated_diagnoses = sum(len(cluster.get("propagated_task_ids", [])) for cluster in clusters)
+    fallback_item_diagnoses = sum(len(cluster.get("fallback_task_ids", [])) for cluster in clusters)
+
+    return {
+        "cluster_count": cluster_count,
+        "compression_ratio": round(input_count / cluster_count, 4) if cluster_count else 1.0,
+        "representative_diagnoses": representative_diagnoses,
+        "propagated_diagnoses": propagated_diagnoses,
+        "fallback_item_diagnoses": fallback_item_diagnoses,
+    }
 
 
 def _same_model_warning(config: CodeMintConfig) -> bool:

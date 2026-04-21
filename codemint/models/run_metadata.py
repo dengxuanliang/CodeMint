@@ -32,6 +32,12 @@ class RunSummary(StrictModel):
     covered_weaknesses: list[str] = []
     weaknesses_without_specs: list[str]
     synthesize_failure_reasons_by_weakness: dict[str, list[str]] = {}
+    diagnose_processing_mode: str = "item"
+    cluster_count: int = 0
+    compression_ratio: float = 1.0
+    representative_diagnoses: int = 0
+    propagated_diagnoses: int = 0
+    fallback_item_diagnoses: int = 0
 
 
 class RunMetadata(StrictModel):

@@ -78,6 +78,12 @@ def test_run_metadata_captures_prompt_versions_and_summary(tmp_path: Path) -> No
         "covered_weaknesses": ["loop_bound"],
         "weaknesses_without_specs": [],
         "synthesize_failure_reasons_by_weakness": {},
+        "diagnose_processing_mode": "item",
+        "cluster_count": 0,
+        "compression_ratio": 1.0,
+        "representative_diagnoses": 0,
+        "propagated_diagnoses": 0,
+        "fallback_item_diagnoses": 0,
     }
     assert metadata["summary"]["elapsed_seconds"] >= 0
 

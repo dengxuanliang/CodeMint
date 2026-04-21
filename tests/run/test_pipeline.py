@@ -86,6 +86,12 @@ def test_run_skips_complete_stage_and_gap_fills_incomplete_stage(tmp_path: Path)
         "covered_weaknesses": ["stub"],
         "weaknesses_without_specs": [],
         "synthesize_failure_reasons_by_weakness": {},
+        "diagnose_processing_mode": "item",
+        "cluster_count": 0,
+        "compression_ratio": 1.0,
+        "representative_diagnoses": 0,
+        "propagated_diagnoses": 0,
+        "fallback_item_diagnoses": 0,
     }
     assert summary["elapsed_seconds"] >= 0
 
@@ -222,6 +228,48 @@ def test_run_pipeline_passes_config_to_default_diagnose_stage(monkeypatch, tmp_p
 
     assert seen["called"] is True
     assert isinstance(seen["config"], CodeMintConfig)
+
+
+def test_run_pipeline_includes_clustered_diagnose_summary_fields(tmp_path: Path) -> None:
+    input_path = tmp_path / "tasks.jsonl"
+    input_path.write_text(
+        "\n".join(
+            [
+                _task(1, "def solve(x):\n    return x + 1"),
+                _task(2, "def solve(x):\n    return x + 1"),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    output_root = tmp_path / "artifacts"
+
+    run_pipeline(
+        input_paths=[input_path],
+        output_root=output_root,
+        run_id="clustered-run",
+        config=CodeMintConfig.model_validate(
+            {
+                "diagnose": {
+                    "processing_mode": "clustered",
+                    "cluster_representatives": 1,
+                    "rediagnose_low_confidence": False,
+                }
+            }
+        ),
+        run_aggregate_stage=lambda diagnoses, output_path: _record_aggregate([], diagnoses, output_path),
+        run_synthesize_stage=lambda report, output_path: _record_synthesize([], report, output_path),
+    )
+
+    summary = json.loads((output_root / "clustered-run" / "run_metadata.json").read_text(encoding="utf-8"))[
+        "summary"
+    ]
+    assert summary["diagnose_processing_mode"] == "clustered"
+    assert summary["cluster_count"] == 1
+    assert summary["compression_ratio"] == 2.0
+    assert summary["representative_diagnoses"] == 1
+    assert summary["propagated_diagnoses"] == 1
+    assert summary["fallback_item_diagnoses"] == 0
 
 
 def test_run_cli_formats_rich_progress_lines(tmp_path: Path) -> None:
