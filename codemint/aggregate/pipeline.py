@@ -226,7 +226,7 @@ def _apply_collective_adjustments(
         current.sub_tags = _normalize_sub_tags(current.sub_tags, tag_mappings)
 
         correction = reclassifications.get(current.task_id)
-        if correction is not None:
+        if correction is not None and _should_apply_reclassification(current, correction):
             current.fault_type = correction[0]
             current.sub_tags = _normalize_sub_tags([correction[1]], tag_mappings)
 
@@ -249,6 +249,17 @@ def _build_reclassifications(
                 continue
             reclassifications[task_id] = parsed
     return reclassifications
+
+
+def _should_apply_reclassification(
+    diagnosis: DiagnosisRecord,
+    correction: tuple[str, str],
+) -> bool:
+    primary_tag = diagnosis.sub_tags[0] if diagnosis.sub_tags else "unknown"
+    target_fault_type, target_sub_tag = correction
+    if primary_tag == "function_name_mismatch" and target_fault_type == "implementation" and target_sub_tag == "logic_error":
+        return False
+    return True
 
 
 def _parse_correction(value: str) -> tuple[str, str] | None:

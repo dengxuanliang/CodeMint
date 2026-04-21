@@ -278,6 +278,45 @@ def test_run_metadata_missing_and_covered_weaknesses_are_limited_to_attempted_to
     assert metadata["summary"]["weaknesses_without_specs"] == ["missing_code"]
 
 
+def test_run_metadata_attempted_weaknesses_deduplicate_canonical_keys_within_top_n(tmp_path: Path) -> None:
+    input_path = tmp_path / "tasks.jsonl"
+    input_path.write_text(
+        "\n".join(
+            [
+                '{"task_id": 1, "content": "task one", "canonical_solution": "ok", "completion": "bad one", "test_code": "assert True", "labels": {}, "accepted": false, "metrics": {}, "extra": {}}',
+                '{"task_id": 2, "content": "task two", "canonical_solution": "ok", "completion": "bad two", "test_code": "assert True", "labels": {}, "accepted": false, "metrics": {}, "extra": {}}',
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    output_root = tmp_path / "artifacts"
+
+    run_pipeline(
+        input_paths=[input_path],
+        output_root=output_root,
+        run_id="run-007",
+        config=CodeMintConfig.model_validate(
+            {
+                "model": {"analysis_model": "gpt-4.1-mini"},
+                "synthesize": {
+                    "specs_per_weakness": 1,
+                    "max_per_weakness": 1,
+                    "top_n": 2,
+                    "narrative_themes": {"generic": ["warehouses"], "domain_adaptive": False},
+                    "data_structures": ["array"],
+                },
+            }
+        ),
+        run_diagnose_stage=lambda tasks, output_path: _write_diagnoses(output_path),
+        run_aggregate_stage=lambda diagnoses, output_path: _write_duplicate_key_weakness_report(output_path),
+        run_synthesize_stage=lambda weakness_report, output_path: _write_specs(output_path, [_spec("spec-0014")]),
+    )
+
+    metadata = json.loads((output_root / "run-007" / "run_metadata.json").read_text(encoding="utf-8"))
+    assert metadata["summary"]["attempted_weaknesses"] == ["function_name_mismatch", "logic_error"]
+
+
 def _write_diagnoses(output_path: Path) -> list[DiagnosisRecord]:
     diagnoses = [
         DiagnosisRecord(
@@ -471,6 +510,65 @@ def _write_three_weakness_report(output_path: Path) -> WeaknessReport:
             "loop_bound": "loop_bound",
             "missing_code": "missing_code",
             "markdown_formatting": "markdown_formatting",
+        },
+    )
+    return _write_report(output_path, report)
+
+
+def _write_duplicate_key_weakness_report(output_path: Path) -> WeaknessReport:
+    report = WeaknessReport(
+        weaknesses=[
+            WeaknessEntry(
+                rank=1,
+                fault_type="implementation",
+                sub_tags=["function_name_mismatch"],
+                frequency=4,
+                sample_task_ids=[1],
+                trainability=0.6,
+                collective_diagnosis=CollectiveDiagnosis(
+                    refined_root_cause="Wrong entry point name.",
+                    capability_cliff="Harness requires exact function name.",
+                    misdiagnosed_ids=[],
+                    misdiagnosis_corrections={},
+                    cluster_coherence=0.95,
+                ),
+            ),
+            WeaknessEntry(
+                rank=2,
+                fault_type="surface",
+                sub_tags=["function_name_mismatch"],
+                frequency=2,
+                sample_task_ids=[2],
+                trainability=0.3,
+                collective_diagnosis=CollectiveDiagnosis(
+                    refined_root_cause="Duplicate canonical weakness with different fault type.",
+                    capability_cliff="Still the same canonical weakness key.",
+                    misdiagnosed_ids=[],
+                    misdiagnosis_corrections={},
+                    cluster_coherence=0.9,
+                ),
+            ),
+            WeaknessEntry(
+                rank=3,
+                fault_type="implementation",
+                sub_tags=["logic_error"],
+                frequency=1,
+                sample_task_ids=[3],
+                trainability=0.6,
+                collective_diagnosis=CollectiveDiagnosis(
+                    refined_root_cause="Wrong formula.",
+                    capability_cliff="Logic diverges on hidden cases.",
+                    misdiagnosed_ids=[],
+                    misdiagnosis_corrections={},
+                    cluster_coherence=0.9,
+                ),
+            ),
+        ],
+        rankings=RankingSet(by_frequency=[1, 2, 3], by_difficulty=[1, 2, 3], by_trainability=[1, 2, 3]),
+        causal_chains=[],
+        tag_mappings={
+            "function_name_mismatch": "function_name_mismatch",
+            "logic_error": "logic_error",
         },
     )
     return _write_report(output_path, report)

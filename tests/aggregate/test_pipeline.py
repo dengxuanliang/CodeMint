@@ -467,6 +467,55 @@ def test_run_aggregate_does_not_reclassify_non_fallback_model_diagnoses(
     assert [entry.sub_tags for entry in report.weaknesses] == [["deep_analysis"]]
 
 
+def test_run_aggregate_does_not_promote_logic_error_from_secondary_tag_on_function_name_mismatch(
+    tmp_path: Path,
+) -> None:
+    from codemint.aggregate.pipeline import run_aggregate
+
+    diagnoses = [
+        DiagnosisRecord(
+            task_id=2302,
+            fault_type="implementation",
+            sub_tags=["function_name_mismatch", "logic_error"],
+            severity="high",
+            description=(
+                "The completion defines a function named 'solver', but the test harness calls 'solve'. "
+                "Returning 0 instead of x * 0 is mentioned as a secondary semantic issue."
+            ),
+            evidence=DiagnosisEvidence(
+                wrong_line="def solver(x):\n    return 0",
+                correct_approach=(
+                    "Define the function with the correct name 'solve' and return the requested expression."
+                ),
+                failed_test="assert solve(8) == 0",
+            ),
+            enriched_labels={},
+            confidence=0.99,
+            diagnosis_source="model_deep",
+            prompt_version="v1",
+        )
+    ]
+
+    def collective_stub(payload: dict) -> dict:
+        return {
+            "refined_root_cause": "Grouped by implementation/function_name_mismatch",
+            "capability_cliff": "Entry-point mismatch is the dominant failure",
+            "misdiagnosed_ids": [2302],
+            "misdiagnosis_corrections": {"2302": "implementation:logic_error"},
+            "cluster_coherence": 0.95,
+            "semantic_merges": [],
+        }
+
+    report = run_aggregate(
+        diagnoses,
+        tmp_path / "weaknesses.json",
+        collective_analyze=collective_stub,
+    )
+
+    weakness_tags = [entry.sub_tags[0] for entry in report.weaknesses]
+    assert weakness_tags == ["function_name_mismatch"]
+
+
 def _diagnosis(
     task_id: int,
     fault_type: str,

@@ -10,7 +10,7 @@ from codemint.models.diagnosis import DiagnosisRecord
 from codemint.models.spec import SpecRecord
 from codemint.prompts.registry import load_prompt
 from codemint.models.weakness import WeaknessEntry, WeaknessReport
-from codemint.synthesize.allocation import allocate_specs, weakness_key
+from codemint.synthesize.allocation import allocate_specs, select_top_weaknesses, weakness_key
 from codemint.synthesize.diversity import assign_diversity_tags, plan_diversity_tags
 from codemint.synthesize.feasibility import check_feasibility
 from codemint.synthesize.generate import default_invoke_model, generate_spec, parse_generation_response
@@ -38,13 +38,14 @@ def run_synthesize(
     attempted_weaknesses: list[str] = []
     total_slots = 0
     slot_progress = 0
+    selected_weaknesses = select_top_weaknesses(report.weaknesses, synthesize_config.top_n)
 
-    for weakness in sorted(report.weaknesses, key=lambda item: item.rank)[: synthesize_config.top_n]:
+    for weakness in selected_weaknesses:
         key = weakness_key(weakness)
         attempted_weaknesses.append(key)
         total_slots += allocated.get(key, synthesize_config.specs_per_weakness)
 
-    for weakness in sorted(report.weaknesses, key=lambda item: item.rank)[: synthesize_config.top_n]:
+    for weakness in selected_weaknesses:
         key = weakness_key(weakness)
         count = allocated.get(key, synthesize_config.specs_per_weakness)
         diversity_plan = plan_diversity_tags(

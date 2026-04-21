@@ -120,6 +120,11 @@ Keep existing artifacts unchanged:
 - `weaknesses.json`
 - `specs.jsonl`
 
+Resumption semantics stay unchanged:
+
+- `diagnoses.jsonl` remains the only per-task checkpoint source and resumes by missing `task_id`.
+- `weaknesses.json` and `specs.jsonl` remain downstream derived artifacts that can be rebuilt from complete diagnose output.
+
 Add one optional debug artifact for clustered mode:
 
 - `diagnose_clusters.json`
