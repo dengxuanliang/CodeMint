@@ -35,17 +35,15 @@ def test_load_config_parses_typed_defaults(tmp_path: Path) -> None:
     assert config.synthesize.difficulty_levels == ["medium", "hard"]
 
 
-def test_config_supports_clustered_diagnose_mode() -> None:
-    config = load_config_from_string(
-        """
-        diagnose:
-          processing_mode: clustered
-          cluster_representatives: 2
-        """
-    )
-
-    assert config.diagnose.processing_mode == "clustered"
-    assert config.diagnose.cluster_representatives == 2
+def test_load_config_rejects_unknown_diagnose_mode_fields() -> None:
+    with pytest.raises(ValueError, match="processing_mode|cluster_representatives|clustered"):
+        load_config_from_string(
+            """
+            diagnose:
+              processing_mode: clustered
+              cluster_representatives: 2
+            """
+        )
 
 
 def test_easy_difficulty_is_rejected() -> None:

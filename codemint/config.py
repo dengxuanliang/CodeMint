@@ -59,12 +59,7 @@ class AggregateConfig(StrictModel):
 
 
 class DiagnoseConfig(StrictModel):
-    processing_mode: Literal["item", "clustered"] = "item"
-    cluster_representatives: int = 3
-    clustering_threshold: float = 0.85
-    low_confidence_threshold: float = 0.55
-    rediagnose_low_confidence: bool = True
-    max_cluster_size_for_propagation: int = 50
+    pass
 
 
 class NarrativeThemesConfig(StrictModel):

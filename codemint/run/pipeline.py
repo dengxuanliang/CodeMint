@@ -9,7 +9,6 @@ from typing import Callable
 
 from codemint.aggregate.pipeline import run_aggregate
 from codemint.config import CodeMintConfig
-from codemint.diagnose.clustered_mode import run_clustered_mode
 from codemint.diagnose.pipeline import run_diagnose
 from codemint.io.filesystem import artifact_paths_for_run, ensure_run_directory
 from codemint.io.jsonl import read_jsonl
@@ -78,13 +77,6 @@ def run_pipeline(
     # - diagnose is the only task-level resumable stage and uses diagnoses.jsonl task_ids
     # - aggregate/synthesize are derived stage outputs and are rerun as whole stages
     if "diagnose" in forced_stages and _should_run_diagnose(artifacts["diagnoses"], len(tasks)):
-        run_clustered_mode.last_stats = {
-            "cluster_count": 0,
-            "compression_ratio": 1.0,
-            "representative_diagnoses": 0,
-            "propagated_diagnoses": 0,
-            "fallback_item_diagnoses": 0,
-        }
         emit_progress("diagnose", "started", 0, len(tasks))
         if run_diagnose_stage is not None:
             diagnoses = run_diagnose_stage(tasks, artifacts["diagnoses"])
@@ -170,8 +162,6 @@ def run_pipeline(
             errors_path=run_dir / "errors.jsonl",
             elapsed_seconds=time.perf_counter() - started_at,
             top_n=resolved_config.synthesize.top_n,
-            diagnose_processing_mode=resolved_config.diagnose.processing_mode,
-            clustered_stats=run_clustered_mode.last_stats,
         ),
     )
     _write_run_metadata(artifacts["run_metadata"], metadata)
@@ -227,12 +217,9 @@ def _build_summary(
     errors_path: Path,
     elapsed_seconds: float,
     top_n: int,
-    diagnose_processing_mode: str,
-    clustered_stats: dict[str, int | float],
 ) -> RunSummary:
     attempted_weaknesses = _attempted_weaknesses(report, top_n)
     covered_weaknesses = _covered_weaknesses(report, specs, attempted_weaknesses)
-    summary_stats = _clustered_diagnose_stats(clustered_stats, diagnose_processing_mode)
     return RunSummary(
         diagnosed=len(diagnoses),
         rule_screened=sum(1 for diagnosis in diagnoses if diagnosis.diagnosis_source != "model_deep"),
@@ -250,12 +237,6 @@ def _build_summary(
         covered_weaknesses=covered_weaknesses,
         weaknesses_without_specs=_weaknesses_without_specs(report, specs, attempted_weaknesses),
         synthesize_failure_reasons_by_weakness=_synthesize_failure_reasons_by_weakness(errors_path),
-        diagnose_processing_mode=diagnose_processing_mode,
-        cluster_count=summary_stats["cluster_count"],
-        compression_ratio=summary_stats["compression_ratio"],
-        representative_diagnoses=summary_stats["representative_diagnoses"],
-        propagated_diagnoses=summary_stats["propagated_diagnoses"],
-        fallback_item_diagnoses=summary_stats["fallback_item_diagnoses"],
     )
 
 
@@ -345,26 +326,6 @@ def _synthesize_failure_reasons_by_weakness(path: Path) -> dict[str, list[str]]:
     return reasons
 
 
-def _clustered_diagnose_stats(
-    stats: dict[str, int | float],
-    processing_mode: str,
-) -> dict[str, int | float]:
-    default = {
-        "cluster_count": 0,
-        "compression_ratio": 1.0,
-        "representative_diagnoses": 0,
-        "propagated_diagnoses": 0,
-        "fallback_item_diagnoses": 0,
-    }
-    if processing_mode != "clustered":
-        return default
-    return {
-        "cluster_count": int(stats.get("cluster_count", 0)),
-        "compression_ratio": float(stats.get("compression_ratio", 1.0)),
-        "representative_diagnoses": int(stats.get("representative_diagnoses", 0)),
-        "propagated_diagnoses": int(stats.get("propagated_diagnoses", 0)),
-        "fallback_item_diagnoses": int(stats.get("fallback_item_diagnoses", 0)),
-    }
 
 
 def _same_model_warning(config: CodeMintConfig) -> bool:

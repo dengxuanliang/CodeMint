@@ -72,7 +72,7 @@ class TaskRecord:
 
 ### Responsibility
 
-Per-task structured root cause analysis. Outputs `diagnoses.jsonl`.
+Per-task structured root cause analysis through a single item-by-item diagnose path. Outputs `diagnoses.jsonl`.
 
 ### Flow
 

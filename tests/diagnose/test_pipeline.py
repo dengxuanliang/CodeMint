@@ -81,6 +81,26 @@ def test_run_diagnose_routes_item_mode_by_default(
     }
 
 
+def test_run_diagnose_always_routes_item_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    tasks = [_task(22, "Program returns the wrong total for some inputs.")]
+    sentinel = [_diagnosis(22, diagnosis_source="model_deep")]
+    calls: dict[str, int] = {"item": 0}
+
+    def fake_run_item_mode(tasks_arg, output_path, rules=None, **kwargs):
+        calls["item"] += 1
+        return sentinel
+
+    monkeypatch.setattr("codemint.diagnose.pipeline.run_item_mode", fake_run_item_mode)
+
+    result = run_diagnose(tasks, tmp_path / "pipeline.jsonl", config=CodeMintConfig())
+
+    assert result == sentinel
+    assert calls == {"item": 1}
+
+
 def test_assertion_error_routes_to_deep_analysis(tmp_path: Path) -> None:
     task = _task(7, "Tests fail with AssertionError: expected 3 == 4")
     output_path = tmp_path / "diagnoses.jsonl"
