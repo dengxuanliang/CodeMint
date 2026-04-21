@@ -315,6 +315,75 @@ def test_synthesize_raises_when_all_specs_fail(tmp_path: Path) -> None:
         )
 
 
+def test_synthesize_uses_function_name_mismatch_fallback_when_generation_fails(tmp_path: Path) -> None:
+    from codemint.synthesize.pipeline import run_synthesize
+
+    report = WeaknessReport(
+        weaknesses=[
+            WeaknessEntry(
+                rank=1,
+                fault_type="implementation",
+                sub_tags=["function_name_mismatch"],
+                frequency=6,
+                sample_task_ids=[2201, 2202, 2203],
+                trainability=0.6,
+                collective_diagnosis=CollectiveDiagnosis(
+                    refined_root_cause="Function definition name does not match the expected callable entry point.",
+                    capability_cliff="Breaks when the harness requires the exact solve(x) name.",
+                    misdiagnosed_ids=[],
+                    misdiagnosis_corrections={},
+                    cluster_coherence=1.0,
+                ),
+            )
+        ],
+        rankings=RankingSet(by_frequency=[1], by_difficulty=[1], by_trainability=[1]),
+        causal_chains=[CausalChain(root="function_name_mismatch", downstream=[], training_priority="high")],
+        tag_mappings={"function_name_mismatch": "function_name_mismatch"},
+    )
+    diagnoses = [
+        DiagnosisRecord(
+            task_id=2201,
+            fault_type="implementation",
+            sub_tags=["function_name_mismatch"],
+            severity="high",
+            description="Wrong function name.",
+            evidence=DiagnosisEvidence(
+                wrong_line="def solve_value(x):\n    return x + 3",
+                correct_approach="Define the exact solve(x) entry point expected by the harness.",
+                failed_test="NameError: name 'solve' is not defined",
+            ),
+            enriched_labels={},
+            confidence=1.0,
+            diagnosis_source="model_deep",
+            prompt_version="v1",
+        )
+    ]
+
+    specs = run_synthesize(
+        report,
+        tmp_path / "specs.jsonl",
+        config=CodeMintConfig.model_validate(
+            {
+                "synthesize": {
+                    "top_n": 1,
+                    "specs_per_weakness": 1,
+                    "max_per_weakness": 1,
+                    "narrative_themes": {"generic": ["warehouses"], "domain_adaptive": False},
+                    "data_structures": ["array"],
+                }
+            }
+        ),
+        diagnoses=diagnoses,
+        invoke_model=lambda payload: (_ for _ in ()).throw(ValueError("forced generation failure")),
+    )
+
+    assert len(specs) == 1
+    spec = specs[0]
+    assert spec.target_weakness.sub_tags == ["function_name_mismatch"]
+    assert any("exact callable entry point" in item.lower() for item in spec.problem_spec.must_cover)
+    assert any("alternate public function names" in item.lower() for item in spec.problem_spec.must_avoid)
+
+
 def test_missing_code_block_local_feasibility_rejects_spec_without_output_constraints() -> None:
     from codemint.synthesize.feasibility import check_feasibility
 

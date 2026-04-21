@@ -250,6 +250,51 @@ def _fallback_spec_for_weakness(
     must_avoid_constraints: list[str],
 ) -> SpecRecord | None:
     key = weakness_key(weakness)
+    if key == "function_name_mismatch":
+        return generate_spec(
+            weakness,
+            diversity_tags=diversity_tags,
+            invoke_model=lambda payload: {
+                "algorithm_type": "simulation",
+                "difficulty": difficulty,
+                "narrative_theme": diversity_tags.narrative_theme,
+                "constraints": {
+                    "n_range": [1, 200],
+                    "value_range": [0, 1000],
+                    "time_limit": "1s",
+                    "memory_limit": "256MB",
+                },
+                "key_trap": "The trap reproduces the original solve_value output instead of the exact solve(x) entry point required by the harness.",
+                "must_cover": [
+                    "exact callable entry point solve(x)",
+                    "single exact public function contract",
+                ],
+                "must_avoid": [
+                    "alternate public function names",
+                    "renaming the public entry point to solve_value, solver, or helper wrappers",
+                ],
+                "verification_spec": {
+                    "min_test_cases": 4,
+                    "must_include_edge_cases": ["single value input"],
+                    "brute_force_verifiable": True,
+                    "brute_force_complexity_limit": "O(n^2)",
+                },
+                "generation_hints": {
+                    "solution_approach": "Implement the exact solve(x) entry point expected by the harness.",
+                    "common_wrong_approach": "Expose solve_value(x) or solver(x) instead of solve(x).",
+                    "distinguishing_test": "Call solve() directly and reject any alternate public function name.",
+                },
+                "language_constraint": {
+                    "target_languages": ["python"],
+                    "language_specific": False,
+                },
+            },
+            original_evidence=original_evidence,
+            spec_index=spec_index,
+            difficulty=difficulty,
+            must_avoid_constraints=must_avoid_constraints,
+            repair_context={"mode": "fallback_generation", "reason": "deterministic function name mismatch fallback"},
+        )
     if key == "markdown_formatting":
         return generate_spec(
             weakness,

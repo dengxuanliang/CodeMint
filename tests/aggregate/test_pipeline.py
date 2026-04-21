@@ -373,7 +373,7 @@ def test_run_aggregate_excludes_explicit_non_failure_diagnoses(tmp_path: Path) -
     assert report.weaknesses[0].sample_task_ids == [92]
 
 
-def test_run_aggregate_reclassifies_deep_analysis_placeholders_into_canonical_failure_tags(
+def test_run_aggregate_preserves_fallback_deep_analysis_placeholders_without_reclassification(
     tmp_path: Path,
 ) -> None:
     from codemint.aggregate.pipeline import run_aggregate
@@ -432,10 +432,7 @@ def test_run_aggregate_reclassifies_deep_analysis_placeholders_into_canonical_fa
     report = run_aggregate(diagnoses, tmp_path / "weaknesses.json")
 
     weakness_tags = [entry.sub_tags[0] for entry in report.weaknesses]
-    assert "deep_analysis" not in weakness_tags
-    assert "missing_code_block" in weakness_tags
-    assert "function_name_mismatch" in weakness_tags
-    assert "logic_error" in weakness_tags
+    assert weakness_tags == ["deep_analysis"]
 
 
 def test_run_aggregate_does_not_reclassify_non_fallback_model_diagnoses(

@@ -53,7 +53,6 @@ def run_aggregate(
     rediagnoser = rediagnose or _identity
     resolved_config = config or CodeMintConfig()
     failure_diagnoses = [diagnosis for diagnosis in diagnoses if _is_failure_diagnosis(diagnosis)]
-    failure_diagnoses = [_normalize_placeholder_diagnosis(diagnosis) for diagnosis in failure_diagnoses]
     repaired = [
         repair_diagnosis(
             diagnosis,
@@ -134,83 +133,6 @@ def _identity(diagnosis: DiagnosisRecord) -> DiagnosisRecord:
 
 def _is_failure_diagnosis(diagnosis: DiagnosisRecord) -> bool:
     return diagnosis.is_failure
-
-
-def _normalize_placeholder_diagnosis(diagnosis: DiagnosisRecord) -> DiagnosisRecord:
-    normalized = diagnosis.model_copy(deep=True)
-    if "deep_analysis" not in {tag.strip().lower() for tag in normalized.sub_tags}:
-        return normalized
-    if normalized.enriched_labels.get("fallback_mode", "").strip().lower() != "true":
-        return normalized
-
-    inferred = _infer_canonical_sub_tag(normalized)
-    if inferred is None:
-        return normalized
-
-    normalized.sub_tags = [inferred]
-    return normalized
-
-
-def _infer_canonical_sub_tag(diagnosis: DiagnosisRecord) -> str | None:
-    text = "\n".join(
-        [
-            diagnosis.evidence.wrong_line,
-            diagnosis.evidence.correct_approach,
-            diagnosis.evidence.failed_test,
-            diagnosis.description,
-        ]
-    ).lower()
-
-    if _looks_like_function_name_mismatch(text):
-        return "function_name_mismatch"
-    if _looks_like_missing_code_block(text):
-        return "missing_code_block"
-    if _looks_like_logic_error(text):
-        return "logic_error"
-    return None
-
-
-def _looks_like_function_name_mismatch(text: str) -> bool:
-    return any(
-        needle in text
-        for needle in (
-            "solve_value",
-            "solve_value(",
-            "nameerror: name 'solve' is not defined",
-            "nameerror: name \"solve\" is not defined",
-            "exact solve(x) entry point",
-            "exact public entry-point",
-            "alternate public function names",
-        )
-    )
-
-
-def _looks_like_missing_code_block(text: str) -> bool:
-    return any(
-        needle in text
-        for needle in (
-            "final code block is missing",
-            "missing code block",
-            "explanation instead of code",
-            "explanation-only",
-            "prose instead of code",
-            "no runnable code",
-        )
-    )
-
-
-def _looks_like_logic_error(text: str) -> bool:
-    return any(
-        needle in text
-        for needle in (
-            "x * 2",
-            "x - 1",
-            "wrong total",
-            "incorrect arithmetic",
-            "wrong arithmetic",
-            "assert solve(",
-        )
-    )
 
 
 def _apply_collective_adjustments(
