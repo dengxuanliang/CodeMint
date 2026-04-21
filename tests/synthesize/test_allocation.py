@@ -26,6 +26,29 @@ def test_root_cause_and_high_trainability_increase_spec_count() -> None:
     assert allocation["off_by_one"] == 3
 
 
+def test_allocate_specs_limits_top_n_by_unique_weakness_key() -> None:
+    from codemint.synthesize.allocation import allocate_specs
+
+    report = WeaknessReport(
+        weaknesses=[
+            _weakness(rank=1, fault_type="implementation", sub_tags=["function_name_mismatch"], trainability=0.6),
+            _weakness(rank=2, fault_type="surface", sub_tags=["function_name_mismatch"], trainability=0.3),
+            _weakness(rank=3, fault_type="implementation", sub_tags=["logic_error"], trainability=0.6),
+        ],
+        rankings=RankingSet(by_frequency=[1, 2, 3], by_difficulty=[1, 2, 3], by_trainability=[1, 2, 3]),
+        causal_chains=[],
+        tag_mappings={
+            "function_name_mismatch": "function_name_mismatch",
+            "logic_error": "logic_error",
+        },
+    )
+    config = CodeMintConfig.model_validate({"synthesize": {"top_n": 2}})
+
+    allocation = allocate_specs(report, config.synthesize)
+
+    assert set(allocation) == {"function_name_mismatch", "logic_error"}
+
+
 def _weakness(
     *,
     rank: int,

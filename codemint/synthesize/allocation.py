@@ -8,7 +8,7 @@ def allocate_specs(report: WeaknessReport, config: SynthesizeConfig) -> dict[str
     root_tags = {chain.root for chain in report.causal_chains}
     allocations: dict[str, int] = {}
 
-    for weakness in sorted(report.weaknesses, key=lambda item: item.rank)[: config.top_n]:
+    for weakness in select_top_weaknesses(report.weaknesses, config.top_n):
         key = weakness_key(weakness)
         base = config.specs_per_weakness
         allocated = min(
@@ -26,3 +26,20 @@ def weakness_key(weakness: WeaknessEntry) -> str:
     if weakness.sub_tags:
         return weakness.sub_tags[0]
     return f"{weakness.fault_type}_{weakness.rank}"
+
+
+def select_top_weaknesses(weaknesses: list[WeaknessEntry], top_n: int) -> list[WeaknessEntry]:
+    if top_n <= 0:
+        return []
+
+    selected: list[WeaknessEntry] = []
+    seen_keys: set[str] = set()
+    for weakness in sorted(weaknesses, key=lambda item: item.rank):
+        key = weakness_key(weakness)
+        if key in seen_keys:
+            continue
+        selected.append(weakness)
+        seen_keys.add(key)
+        if len(selected) >= top_n:
+            break
+    return selected

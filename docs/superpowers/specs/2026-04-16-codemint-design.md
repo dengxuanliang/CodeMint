@@ -25,6 +25,14 @@ codemint run       → chains all three stages
 
 Every run produces `outputs/<run_id>/run_metadata.json` for traceability.
 
+### Resumption Contract
+
+`diagnoses.jsonl` is the only per-task resumption source of truth.
+
+- Diagnose resumes strictly by `task_id` gap-fill. If a `task_id` is absent from `diagnoses.jsonl`, that task has not completed diagnose and must be diagnosed. If a `task_id` is present, diagnose treats it as complete and does not automatically re-run it.
+- `weaknesses.json` and `specs.jsonl` are derived artifacts, not per-item checkpoints. They may be discarded and rebuilt from upstream artifacts without re-running completed diagnose rows.
+- In practice, downstream recovery is stage-level: if `diagnoses.jsonl` is complete but aggregate or synthesize artifacts are missing, empty, or stale relative to current diagnose output, rerun aggregate and/or synthesize for the whole stage rather than attempting partial per-weakness recovery.
+
 ---
 
 ## 2. Input Layer: LogLoader
@@ -64,7 +72,7 @@ class TaskRecord:
 
 ### Responsibility
 
-Per-task structured root cause analysis. Outputs `diagnoses.jsonl`.
+Per-task structured root cause analysis through a single item-by-item diagnose path. Outputs `diagnoses.jsonl`.
 
 ### Flow
 

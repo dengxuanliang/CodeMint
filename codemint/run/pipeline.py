@@ -19,6 +19,7 @@ from codemint.models.spec import SpecRecord
 from codemint.models.weakness import WeaknessReport
 from codemint.prompts.registry import load_prompt
 from codemint.run.dry_run import RunStage
+from codemint.synthesize.allocation import select_top_weaknesses, weakness_key
 from codemint.synthesize.pipeline import read_weakness_report, run_synthesize
 
 
@@ -72,6 +73,9 @@ def run_pipeline(
         progress_callback(event.model_dump(mode="python"))
 
     diagnoses: list[DiagnosisRecord]
+    # Resume contract:
+    # - diagnose is the only task-level resumable stage and uses diagnoses.jsonl task_ids
+    # - aggregate/synthesize are derived stage outputs and are rerun as whole stages
     if "diagnose" in forced_stages and _should_run_diagnose(artifacts["diagnoses"], len(tasks)):
         emit_progress("diagnose", "started", 0, len(tasks))
         if run_diagnose_stage is not None:
@@ -264,10 +268,7 @@ def _spec_counts_by_weakness(specs: list[SpecRecord]) -> dict[str, int]:
 def _attempted_weaknesses(report: WeaknessReport, top_n: int) -> list[str]:
     if not report.weaknesses or top_n <= 0:
         return []
-    return [
-        weakness.sub_tags[0] if weakness.sub_tags else "unknown"
-        for weakness in sorted(report.weaknesses, key=lambda item: item.rank)[:top_n]
-    ]
+    return [weakness_key(weakness) for weakness in select_top_weaknesses(report.weaknesses, top_n)]
 
 
 def _covered_weaknesses(
@@ -323,6 +324,8 @@ def _synthesize_failure_reasons_by_weakness(path: Path) -> dict[str, list[str]]:
         if reason and reason not in reasons[weakness]:
             reasons[weakness].append(reason)
     return reasons
+
+
 
 
 def _same_model_warning(config: CodeMintConfig) -> bool:

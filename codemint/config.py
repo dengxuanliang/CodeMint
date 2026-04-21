@@ -58,6 +58,10 @@ class AggregateConfig(StrictModel):
     sub_tag_limit_per_category: int = 20
 
 
+class DiagnoseConfig(StrictModel):
+    pass
+
+
 class NarrativeThemesConfig(StrictModel):
     generic: list[str] = Field(default_factory=list)
     domain_adaptive: bool = True
@@ -99,6 +103,7 @@ class CodeMintConfig(StrictModel):
     prompts: PromptConfig = Field(default_factory=PromptConfig)
     rules: RulesConfig = Field(default_factory=RulesConfig)
     aggregate: AggregateConfig = Field(default_factory=AggregateConfig)
+    diagnose: DiagnoseConfig = Field(default_factory=DiagnoseConfig)
     synthesize: SynthesizeConfig = Field(default_factory=SynthesizeConfig)
 
 

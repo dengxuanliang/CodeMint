@@ -6,6 +6,8 @@ from codemint.io.jsonl import read_jsonl
 
 
 def find_missing_task_ids(existing_diagnoses_path: Path, expected_task_ids: list[int]) -> list[int]:
+    # `diagnoses.jsonl` is the only per-task resume source of truth.
+    # Any task_id present here is treated as a completed diagnose row.
     if not existing_diagnoses_path.exists():
         return list(expected_task_ids)
 

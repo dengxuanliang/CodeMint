@@ -224,6 +224,7 @@ def test_run_pipeline_passes_config_to_default_diagnose_stage(monkeypatch, tmp_p
     assert isinstance(seen["config"], CodeMintConfig)
 
 
+
 def test_run_cli_formats_rich_progress_lines(tmp_path: Path) -> None:
     from codemint import cli as cli_module
 

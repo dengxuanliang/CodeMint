@@ -49,6 +49,58 @@ def test_rule_match_with_high_severity_calls_confirmation_model(tmp_path: Path) 
     assert read_jsonl(output_path) == [diagnoses[0].model_dump(mode="json")]
 
 
+def test_run_diagnose_routes_item_mode_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    tasks = [_task(21, "The submission crashes with NameError: helper is not defined")]
+    rules = build_rules()
+    config = CodeMintConfig()
+    sentinel = [_diagnosis(21, diagnosis_source="rule_only")]
+    captured: dict[str, object] = {}
+
+    def fake_run_item_mode(tasks_arg, output_path, rules=None, **kwargs):
+        captured["tasks"] = tasks_arg
+        captured["output_path"] = output_path
+        captured["rules"] = rules
+        captured["kwargs"] = kwargs
+        return sentinel
+
+    monkeypatch.setattr("codemint.diagnose.pipeline.run_item_mode", fake_run_item_mode)
+
+    result = run_diagnose(tasks, tmp_path / "pipeline.jsonl", rules=rules, config=config)
+
+    assert result == sentinel
+    assert captured["tasks"] == tasks
+    assert captured["output_path"] == tmp_path / "pipeline.jsonl"
+    assert captured["rules"] == rules
+    assert captured["kwargs"] == {
+        "config": config,
+        "confirm_analyzer": None,
+        "deep_analyzer": None,
+    }
+
+
+def test_run_diagnose_always_routes_item_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    tasks = [_task(22, "Program returns the wrong total for some inputs.")]
+    sentinel = [_diagnosis(22, diagnosis_source="model_deep")]
+    calls: dict[str, int] = {"item": 0}
+
+    def fake_run_item_mode(tasks_arg, output_path, rules=None, **kwargs):
+        calls["item"] += 1
+        return sentinel
+
+    monkeypatch.setattr("codemint.diagnose.pipeline.run_item_mode", fake_run_item_mode)
+
+    result = run_diagnose(tasks, tmp_path / "pipeline.jsonl", config=CodeMintConfig())
+
+    assert result == sentinel
+    assert calls == {"item": 1}
+
+
 def test_assertion_error_routes_to_deep_analysis(tmp_path: Path) -> None:
     task = _task(7, "Tests fail with AssertionError: expected 3 == 4")
     output_path = tmp_path / "diagnoses.jsonl"
@@ -280,7 +332,7 @@ def test_run_diagnose_uses_model_backed_deep_analyzer_when_configured(
             }
             ```"""
 
-    monkeypatch.setattr("codemint.diagnose.pipeline.ModelClient", StubClient)
+    monkeypatch.setattr("codemint.diagnose.item_mode.ModelClient", StubClient)
 
     diagnoses = run_diagnose(
         [task],
@@ -342,7 +394,7 @@ def test_run_diagnose_retries_after_invalid_model_output(
               "prompt_version": "v1"
             }"""
 
-    monkeypatch.setattr("codemint.diagnose.pipeline.ModelClient", StubClient)
+    monkeypatch.setattr("codemint.diagnose.item_mode.ModelClient", StubClient)
 
     diagnoses = run_diagnose(
         [task],
@@ -414,7 +466,7 @@ def test_run_diagnose_rejects_non_taxonomy_primary_tag_and_retries(
               "prompt_version": "v1"
             }"""
 
-    monkeypatch.setattr("codemint.diagnose.pipeline.ModelClient", StubClient)
+    monkeypatch.setattr("codemint.diagnose.item_mode.ModelClient", StubClient)
 
     diagnoses = run_diagnose(
         [task],
