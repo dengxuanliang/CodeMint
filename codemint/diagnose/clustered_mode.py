@@ -22,6 +22,7 @@ from codemint.models.diagnosis import DiagnosisRecord
 from codemint.models.task import TaskRecord
 from codemint.rules.builtin import DiagnosisRule
 from codemint.rules.custom import build_rules
+from codemint.rules.engine import RuleEngine
 
 
 def run_clustered_mode(
@@ -47,7 +48,11 @@ def run_clustered_mode(
         return existing_diagnoses
 
     tasks_by_id = {task.task_id: task for task in missing_tasks}
-    fingerprints = [build_fingerprint(task) for task in missing_tasks]
+    rule_engine = RuleEngine(active_rules)
+    fingerprints = [
+        build_fingerprint(task, rule_hint=_match_rule_hint(rule_engine, task))
+        for task in missing_tasks
+    ]
     clusters = cluster_fingerprints(
         fingerprints,
         threshold=diagnose_config.clustering_threshold,
@@ -88,10 +93,50 @@ def run_clustered_mode(
         cluster_payloads.append(_cluster_payload(cluster, propagation))
 
     ordered_new = sorted(new_diagnoses, key=lambda diagnosis: diagnosis.task_id)
+    stats = _clustered_stats(clusters, ordered_new)
     if ordered_new:
         append_jsonl(output_path, [diagnosis.model_dump(mode="json") for diagnosis in ordered_new])
     _write_cluster_artifact(output_path.parent / "diagnose_clusters.json", clusters, cluster_payloads)
+    run_clustered_mode.last_stats = stats
     return existing_diagnoses + ordered_new
+
+
+def _match_rule_hint(engine: RuleEngine, task: TaskRecord) -> str | None:
+    matched = engine.match("\n".join(part for part in (task.content, task.completion, task.test_code) if part))
+    if matched is None:
+        return None
+    return matched.sub_tag
+
+
+def _clustered_stats(
+    clusters: list[DiagnoseCluster],
+    diagnoses: list[DiagnosisRecord],
+) -> dict[str, int | float]:
+    representative_diagnoses = sum(len(cluster.representative_task_ids) for cluster in clusters)
+    propagated_diagnoses = sum(
+        1 for diagnosis in diagnoses if diagnosis.enriched_labels.get("diagnosis_origin") == "propagated"
+    )
+    fallback_item_diagnoses = max(
+        len(diagnoses) - representative_diagnoses - propagated_diagnoses,
+        0,
+    )
+    cluster_count = len(clusters)
+    return {
+        "cluster_count": cluster_count,
+        "compression_ratio": round(len(diagnoses) / cluster_count, 4) if cluster_count else 1.0,
+        "representative_diagnoses": representative_diagnoses,
+        "propagated_diagnoses": propagated_diagnoses,
+        "fallback_item_diagnoses": fallback_item_diagnoses,
+    }
+
+
+run_clustered_mode.last_stats = {
+    "cluster_count": 0,
+    "compression_ratio": 1.0,
+    "representative_diagnoses": 0,
+    "propagated_diagnoses": 0,
+    "fallback_item_diagnoses": 0,
+}
 
 
 def _cluster_payload(cluster: DiagnoseCluster, propagation: PropagationResult) -> dict:

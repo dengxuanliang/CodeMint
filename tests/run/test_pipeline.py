@@ -272,6 +272,61 @@ def test_run_pipeline_includes_clustered_diagnose_summary_fields(tmp_path: Path)
     assert summary["fallback_item_diagnoses"] == 0
 
 
+def test_run_pipeline_clustered_summary_does_not_depend_on_cluster_artifact_after_diagnose(tmp_path: Path) -> None:
+    input_path = tmp_path / "tasks.jsonl"
+    input_path.write_text(
+        "\n".join(
+            [
+                _task(1, "def solve(x):\n    return x + 1"),
+                _task(2, "def solve(x):\n    return x + 1"),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    output_root = tmp_path / "artifacts"
+
+    def run_diagnose_stage(tasks, output_path):
+        diagnoses = _record_diagnose([], tasks, output_path)
+        clusters_path = output_path.parent / "diagnose_clusters.json"
+        clusters_path.write_text(
+            json.dumps(
+                {
+                    "summary": {"cluster_count": 1, "task_count": 2},
+                    "clusters": [
+                        {
+                            "cluster_id": "cluster-0001",
+                            "member_task_ids": [1, 2],
+                            "representative_task_ids": [1],
+                            "fallback_task_ids": [],
+                            "propagated_task_ids": [2],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        clusters_path.unlink()
+        return diagnoses
+
+    run_pipeline(
+        input_paths=[input_path],
+        output_root=output_root,
+        run_id="clustered-no-artifact",
+        config=CodeMintConfig.model_validate({"diagnose": {"processing_mode": "clustered"}}),
+        run_diagnose_stage=run_diagnose_stage,
+        run_aggregate_stage=lambda diagnoses, output_path: _record_aggregate([], diagnoses, output_path),
+        run_synthesize_stage=lambda report, output_path: _record_synthesize([], report, output_path),
+    )
+
+    summary = json.loads(
+        (output_root / "clustered-no-artifact" / "run_metadata.json").read_text(encoding="utf-8")
+    )["summary"]
+    assert summary["diagnose_processing_mode"] == "clustered"
+    assert summary["cluster_count"] == 0
+    assert summary["compression_ratio"] == 1.0
+
+
 def test_run_cli_formats_rich_progress_lines(tmp_path: Path) -> None:
     from codemint import cli as cli_module
 

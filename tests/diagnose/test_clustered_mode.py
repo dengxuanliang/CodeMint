@@ -106,6 +106,29 @@ def test_run_diagnose_clustered_emits_item_level_records_and_cluster_artifact(tm
     assert clusters["summary"]["cluster_count"] == 2
 
 
+def test_run_diagnose_clustered_uses_rule_hints_to_keep_conflicting_failures_separate(tmp_path: Path) -> None:
+    from codemint.diagnose.pipeline import run_diagnose
+
+    tasks = [
+        _task(1, completion="def solve(x):\n    return x + 1"),
+        _task(2, completion="def solve(x):\n    return x + 1\n# NameError: helper is not defined"),
+    ]
+    config = CodeMintConfig.model_validate(
+        {"diagnose": {"processing_mode": "clustered", "cluster_representatives": 1}}
+    )
+
+    results = run_diagnose(
+        tasks,
+        tmp_path / "diagnoses.jsonl",
+        config=config,
+        deep_analyzer=lambda task: _diagnosis(task.task_id, sub_tags=["logic_error"], confidence=0.9),
+    )
+
+    assert [result.task_id for result in results] == [1, 2]
+    clusters = json.loads((tmp_path / "diagnose_clusters.json").read_text(encoding="utf-8"))
+    assert [cluster["member_task_ids"] for cluster in clusters["clusters"]] == [[1], [2]]
+
+
 def _cluster(
     member_task_ids: list[int],
     *,
