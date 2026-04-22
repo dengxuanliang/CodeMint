@@ -7,6 +7,7 @@ import pytest
 
 from codemint.loaders.detect import detect_loader
 from codemint.loaders.merged import MergedFileLoader
+from codemint.loaders.real_log import RealLogFileLoader
 from codemint.loaders.split import SplitFileLoader
 
 
@@ -14,6 +15,12 @@ def test_detects_merged_loader_for_single_file() -> None:
     loader = detect_loader([Path("tests/fixtures/input/merged_eval.jsonl")])
 
     assert isinstance(loader, MergedFileLoader)
+
+
+def test_detects_real_log_loader_for_single_file() -> None:
+    loader = detect_loader([Path("tests/fixtures/input/real_log_eval.jsonl")])
+
+    assert isinstance(loader, RealLogFileLoader)
 
 
 def test_detects_split_loader_for_inference_and_results_files() -> None:

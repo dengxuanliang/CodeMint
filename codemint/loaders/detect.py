@@ -4,6 +4,7 @@ from pathlib import Path
 
 from codemint.loaders.base import BaseLoader, read_jsonl
 from codemint.loaders.merged import MergedFileLoader
+from codemint.loaders.real_log import RealLogFileLoader
 from codemint.loaders.split import SplitFileLoader
 
 TASK_FIELDS = {
@@ -30,12 +31,24 @@ INFERENCE_FIELDS = {
 
 RESULT_FIELDS = {"task_id", "accepted", "metrics"}
 
+REAL_LOG_FIELDS = {
+    "id",
+    "content",
+    "canonical_solution",
+    "completion",
+    "labels",
+    "pass_at_1",
+    "test",
+}
+
 
 def detect_loader(paths: list[Path]) -> BaseLoader:
     if len(paths) == 1:
         first_record = _first_record(paths[0])
         if TASK_FIELDS.issubset(first_record):
             return MergedFileLoader()
+        if REAL_LOG_FIELDS.issubset(first_record):
+            return RealLogFileLoader()
 
     if len(paths) == 2:
         fields = [set(_first_record(path)) for path in paths]
