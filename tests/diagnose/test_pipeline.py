@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import pytest
@@ -231,6 +232,86 @@ def test_rule_miss_routes_to_deep_analysis(tmp_path: Path) -> None:
 
     assert calls == [("deep", 9)]
     assert diagnoses[0].diagnosis_source == "model_deep"
+
+
+def test_run_diagnose_processes_missing_tasks_with_bounded_parallelism(tmp_path: Path) -> None:
+    tasks = [
+        _task(31, "Program returns the wrong total for some inputs."),
+        _task(32, "Program returns the wrong total for some inputs."),
+    ]
+    output_path = tmp_path / "diagnoses.jsonl"
+    entered: list[int] = []
+    started = threading.Event()
+    release = threading.Event()
+    lock = threading.Lock()
+
+    def deep_analyzer(task: TaskRecord) -> DiagnosisRecord:
+        with lock:
+            entered.append(task.task_id)
+            if len(entered) == 2:
+                started.set()
+        if not started.wait(timeout=1):
+            pytest.fail("expected two diagnose workers to enter the analyzer concurrently")
+        if not release.wait(timeout=1):
+            pytest.fail("parallel diagnose worker did not release")
+        return _diagnosis(task.task_id, diagnosis_source="model_deep")
+
+    worker = threading.Thread(
+        target=lambda: run_diagnose(
+            tasks,
+            output_path,
+            rules=build_rules(),
+            config=CodeMintConfig.model_validate({"diagnose": {"concurrency": 2}}),
+            deep_analyzer=deep_analyzer,
+        ),
+        daemon=True,
+    )
+    worker.start()
+
+    if not started.wait(timeout=1):
+        pytest.fail("expected diagnose to schedule both tasks concurrently")
+    release.set()
+    worker.join(timeout=1)
+    assert not worker.is_alive(), "diagnose worker thread should complete"
+    assert sorted(entered) == [31, 32]
+    assert sorted(row["task_id"] for row in read_jsonl(output_path)) == [31, 32]
+
+
+def test_run_diagnose_defaults_to_serial_execution(tmp_path: Path) -> None:
+    tasks = [
+        _task(41, "Program returns the wrong total for some inputs."),
+        _task(42, "Program returns the wrong total for some inputs."),
+    ]
+    output_path = tmp_path / "diagnoses.jsonl"
+    entered: list[int] = []
+    release = threading.Event()
+    lock = threading.Lock()
+
+    def deep_analyzer(task: TaskRecord) -> DiagnosisRecord:
+        with lock:
+            entered.append(task.task_id)
+            if len(entered) > 1:
+                pytest.fail("default diagnose execution should remain serial")
+        if not release.wait(timeout=1):
+            pytest.fail("serial diagnose worker did not release")
+        with lock:
+            entered.remove(task.task_id)
+        return _diagnosis(task.task_id, diagnosis_source="model_deep")
+
+    worker = threading.Thread(
+        target=lambda: run_diagnose(
+            tasks,
+            output_path,
+            rules=build_rules(),
+            deep_analyzer=deep_analyzer,
+        ),
+        daemon=True,
+    )
+    worker.start()
+    release.set()
+    worker.join(timeout=1)
+    assert not worker.is_alive(), "serial diagnose worker thread should complete"
+    assert sorted(row["task_id"] for row in read_jsonl(output_path)) == [41, 42]
 
 
 def test_default_confirmation_preserves_rule_metadata(tmp_path: Path) -> None:

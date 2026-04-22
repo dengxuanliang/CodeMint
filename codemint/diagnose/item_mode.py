@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -73,26 +74,52 @@ def run_item_mode(
     existing_diagnoses = _load_existing_diagnoses(output_path)
 
     missing_task_ids = set(find_missing_task_ids(output_path, [task.task_id for task in tasks]))
+    tasks_to_process = [task for task in tasks if task.task_id in missing_task_ids]
     new_diagnoses: list[DiagnosisRecord] = []
     processed = len(existing_diagnoses)
-    for task in tasks:
-        if task.task_id not in missing_task_ids:
-            continue
-        diagnosis = _diagnose_task(task, engine, confirmer, deep)
-        new_diagnoses.append(diagnosis)
-        append_jsonl(output_path, [diagnosis.model_dump(mode="json")])
-        processed += 1
-        if progress_callback is not None:
-            progress_callback(
-                {
-                    "stage": "diagnose",
-                    "status": "running",
-                    "processed": processed,
-                    "total": len(tasks),
-                    "errors": 0,
-                    "eta_seconds": max(len(tasks) - processed, 0) * 3,
-                }
-            )
+    concurrency = max(resolved_config.diagnose.concurrency, 1)
+
+    if concurrency == 1 or len(tasks_to_process) <= 1:
+        for task in tasks_to_process:
+            diagnosis = _diagnose_task(task, engine, confirmer, deep)
+            new_diagnoses.append(diagnosis)
+            append_jsonl(output_path, [diagnosis.model_dump(mode="json")])
+            processed += 1
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "stage": "diagnose",
+                        "status": "running",
+                        "processed": processed,
+                        "total": len(tasks),
+                        "errors": 0,
+                        "eta_seconds": max(len(tasks) - processed, 0) * 3,
+                    }
+                )
+        return existing_diagnoses + new_diagnoses
+
+    max_workers = min(concurrency, len(tasks_to_process))
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_task_id = {
+            executor.submit(_diagnose_task, task, engine, confirmer, deep): task.task_id
+            for task in tasks_to_process
+        }
+        for future in as_completed(future_to_task_id):
+            diagnosis = future.result()
+            new_diagnoses.append(diagnosis)
+            append_jsonl(output_path, [diagnosis.model_dump(mode="json")])
+            processed += 1
+            if progress_callback is not None:
+                progress_callback(
+                    {
+                        "stage": "diagnose",
+                        "status": "running",
+                        "processed": processed,
+                        "total": len(tasks),
+                        "errors": 0,
+                        "eta_seconds": max(len(tasks) - processed, 0) * 3,
+                    }
+                )
 
     return existing_diagnoses + new_diagnoses
 

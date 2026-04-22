@@ -59,7 +59,7 @@ class AggregateConfig(StrictModel):
 
 
 class DiagnoseConfig(StrictModel):
-    pass
+    concurrency: int = 1
 
 
 class NarrativeThemesConfig(StrictModel):
