@@ -31,6 +31,12 @@ Rules:
 - `diagnosis_source` must be `model_deep` for real failures and `non_failure` for success-like records.
 - `evidence` must be an object, never a string.
 - All `enriched_labels` values must be strings.
+- Interpret the completion according to `programming_language`, and interpret the test harness according to `execution_language`.
+- Do not default to Python assumptions when `programming_language` or `execution_language` indicates another language or harness.
+- `prompt_requests_markdown_wrapper` tells you whether the task explicitly asked for markdown code fences or a markdown code block wrapper.
+- If `prompt_requests_markdown_wrapper` is true, markdown fences by themselves are not a failure and must not be diagnosed as `markdown_formatting`.
+- Use `markdown_formatting` only when formatting noise violates the required execution contract and directly prevents otherwise executable code from being accepted or run.
+- If `truncation_info` indicates a field was truncated, reason from the retained evidence and do not assume missing omitted text proves a failure mode by itself.
 - Use canonical weakness tags in `sub_tags`; do not invent synonyms when one of these applies.
 - For failure cases, the primary `sub_tags[0]` must be one of exactly: `function_name_mismatch`, `markdown_formatting`, `missing_code_block`, `syntax_error`, `logic_error`, or `non_executable_code`.
 - Secondary tags, if any, must also come from that same allowed failure taxonomy. Do not emit tags like `missing_colon`, `wrong_function_name`, or any other invented root tag.

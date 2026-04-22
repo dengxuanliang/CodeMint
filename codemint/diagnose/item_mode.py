@@ -10,6 +10,7 @@ from codemint.diagnose.confirm import (
     default_confirm_analyzer,
 )
 from codemint.diagnose.deep import DeepAnalyzer, deep_analyze_with_model
+from codemint.diagnose.payloads import build_diagnose_payload
 from codemint.diagnose.resume import find_missing_task_ids
 from codemint.io.jsonl import append_jsonl, read_jsonl
 from codemint.modeling.client import ModelClient
@@ -141,15 +142,7 @@ def _default_deep_analyzer(config: CodeMintConfig) -> DeepAnalyzer:
     prompt = load_prompt("diagnose_deep_analysis")
 
     def analyze(task: TaskRecord) -> DiagnosisRecord:
-        payload = {
-            "task_id": task.task_id,
-            "content": task.content,
-            "completion": task.completion,
-            "test_code": task.test_code,
-            "labels": task.labels,
-            "accepted": task.accepted,
-            "metrics": task.metrics,
-        }
+        payload = build_diagnose_payload(task, config=config)
 
         def invoke(format_error: str | None) -> str:
             user_prompt = f"{prompt.template}\n\nPayload JSON:\n{json.dumps(payload, ensure_ascii=False)}"
@@ -171,17 +164,12 @@ def _default_confirm_analyzer(config: CodeMintConfig) -> ConfirmAnalyzer:
     prompt = load_prompt("diagnose_deep_analysis")
 
     def analyze(task: TaskRecord, rule: DiagnosisRule) -> DiagnosisRecord:
-        payload = {
-            "task_id": task.task_id,
-            "content": task.content,
-            "completion": task.completion,
-            "test_code": task.test_code,
-            "matched_rule": {
-                "rule_id": rule.rule_id,
-                "fault_type": rule.fault_type,
-                "sub_tag": rule.sub_tag,
-                "severity": rule.severity,
-            },
+        payload = build_diagnose_payload(task, config=config)
+        payload["matched_rule"] = {
+            "rule_id": rule.rule_id,
+            "fault_type": rule.fault_type,
+            "sub_tag": rule.sub_tag,
+            "severity": rule.severity,
         }
 
         def invoke(format_error: str | None) -> str:

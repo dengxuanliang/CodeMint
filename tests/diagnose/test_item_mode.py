@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from codemint.config import CodeMintConfig
 from codemint.diagnose.item_mode import run_item_mode
 from codemint.io.jsonl import read_jsonl
 from codemint.models.diagnosis import DiagnosisEvidence, DiagnosisRecord
@@ -114,6 +115,52 @@ def test_item_mode_honors_explicit_empty_rules_list(tmp_path: Path) -> None:
     assert calls == [("deep", 3)]
     assert result[0].diagnosis_source == "model_deep"
     assert read_jsonl(output_path) == [result[0].model_dump(mode="json")]
+
+
+def test_item_mode_model_payload_includes_language_markdown_contract_and_truncation(monkeypatch, tmp_path: Path) -> None:
+    task = TaskRecord(
+        task_id=55,
+        content="Please wrap the answering code with markdown code block format, e.g. ```html [code] ```",
+        canonical_solution="solution " * 200,
+        completion=("head " * 300) + "```html\n<form></form>\n```" + ("tail " * 300),
+        test_code=("setup " * 300) + "#<INSERT>\nexpect(true).toBe(true)\n" + ("check " * 300),
+        labels={
+            "programming_language": "html",
+            "execution_language": "jest",
+            "difficulty": "hard",
+        },
+        accepted=False,
+        metrics={},
+        extra={},
+    )
+    seen_prompts: list[str] = []
+
+    class FakeClient:
+        def complete(self, system_prompt: str, user_prompt: str) -> str:
+            seen_prompts.append(user_prompt)
+            return (
+                '{"task_id": 55, "fault_type": "implementation", "sub_tags": ["non_executable_code"], '
+                '"severity": "medium", "description": "diagnosis", '
+                '"evidence": {"wrong_line": "line", "correct_approach": "approach", "failed_test": "test"}, '
+                '"enriched_labels": {}, "confidence": 0.8, "diagnosis_source": "model_deep", "prompt_version": "v1"}'
+            )
+
+    monkeypatch.setattr("codemint.diagnose.item_mode._build_model_client", lambda config: FakeClient())
+
+    run_item_mode(
+        [task],
+        output_path=tmp_path / "item.jsonl",
+        rules=[],
+        config=CodeMintConfig.model_validate({"model": {"max_input_tokens": 80, "analysis_model": "fake"}}),
+    )
+
+    assert len(seen_prompts) == 1
+    prompt = seen_prompts[0]
+    assert '"programming_language": "html"' in prompt
+    assert '"execution_language": "jest"' in prompt
+    assert '"prompt_requests_markdown_wrapper": true' in prompt
+    assert '"completion_truncated": true' in prompt
+    assert '"test_code_truncated": true' in prompt
 
 
 def _task(task_id: int, completion: str) -> TaskRecord:
