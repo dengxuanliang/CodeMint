@@ -9,6 +9,9 @@ model:
   timeout: 120
   max_input_tokens: 8000
 
+diagnose:
+  concurrency: 3
+
 synthesize:
   specs_per_weakness: 2
   max_per_weakness: 2

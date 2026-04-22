@@ -32,7 +32,19 @@ def test_load_config_parses_typed_defaults(tmp_path: Path) -> None:
 
     assert config.model.base_url == "https://api.openai.com/v1"
     assert config.aggregate.verification_level == "auto"
+    assert config.diagnose.concurrency == 1
     assert config.synthesize.difficulty_levels == ["medium", "hard"]
+
+
+def test_load_config_parses_diagnose_concurrency() -> None:
+    config = load_config_from_string(
+        """
+        diagnose:
+          concurrency: 3
+        """
+    )
+
+    assert config.diagnose.concurrency == 3
 
 
 def test_load_config_rejects_unknown_diagnose_mode_fields() -> None:

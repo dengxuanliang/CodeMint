@@ -459,7 +459,12 @@ model:
   retry_backoff: "exponential"         # 1s, 2s, 4s
   timeout: 120                         # seconds
   max_input_tokens: 8000               # truncation priority: test_code → solution → content (never)
+
+diagnose:
+  concurrency: 3                       # bounded item-level diagnose workers; default is 1
 ```
+
+`diagnose.concurrency` only parallelizes independent item-mode diagnosis calls. A value of `1` preserves fully serial execution and is the default. The pipeline still writes each completed diagnosis row to `diagnoses.jsonl` immediately, so task-id resume behavior is unchanged.
 
 **Same-model blind spot warning:** When `analysis_model == evaluated_model`, output includes `"self_analysis_warning": true` and summary warns of potential systematic bias.
 
@@ -545,6 +550,9 @@ model:
   retry_backoff: "exponential"
   timeout: 120
   max_input_tokens: 8000
+
+diagnose:
+  concurrency: 3                       # optional; default 1 keeps serial item diagnosis
 
 evaluation_api:
   base_url: "http://localhost:8080"    # optional
