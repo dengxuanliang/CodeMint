@@ -78,6 +78,7 @@ def test_run_diagnose_routes_item_mode_by_default(
         "config": config,
         "confirm_analyzer": None,
         "deep_analyzer": None,
+        "progress_callback": None,
     }
 
 
@@ -488,6 +489,80 @@ def test_run_diagnose_rejects_non_taxonomy_primary_tag_and_retries(
     assert len(prompts) >= 1
     if len(prompts) > 1:
         assert "allowed taxonomy" in prompts[1].lower()
+
+
+def test_run_diagnose_retries_when_fault_type_uses_canonical_weakness_tag(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    task = _task(19, "Completion computes the wrong value.")
+    output_path = tmp_path / "diagnoses.jsonl"
+    prompts: list[str] = []
+
+    class StubClient:
+        def __init__(self, config):
+            self.config = config
+            self.calls = 0
+
+        def complete(self, system_prompt: str, user_prompt: str) -> str:
+            prompts.append(user_prompt)
+            self.calls += 1
+            if self.calls <= 2:
+                return """{
+                  "task_id": 19,
+                  "fault_type": "logic_error",
+                  "sub_tags": ["logic_error"],
+                  "severity": "medium",
+                  "description": "The executable code computes the wrong result.",
+                  "evidence": {
+                    "wrong_line": "return x - 1",
+                    "correct_approach": "Return the expected value.",
+                    "failed_test": "assert solve(3) == 4"
+                  },
+                  "enriched_labels": {},
+                  "confidence": 0.82,
+                  "diagnosis_source": "model_deep",
+                  "prompt_version": "v1"
+                }"""
+            return """{
+              "task_id": 19,
+              "fault_type": "implementation",
+              "sub_tags": ["logic_error"],
+              "severity": "medium",
+              "description": "The executable code computes the wrong result.",
+              "evidence": {
+                "wrong_line": "return x - 1",
+                "correct_approach": "Return the expected value.",
+                "failed_test": "assert solve(3) == 4"
+              },
+              "enriched_labels": {},
+              "confidence": 0.82,
+              "diagnosis_source": "model_deep",
+              "prompt_version": "v1"
+            }"""
+
+    monkeypatch.setattr("codemint.diagnose.item_mode.ModelClient", StubClient)
+
+    diagnoses = run_diagnose(
+        [task],
+        output_path,
+        rules=[],
+        config=CodeMintConfig.model_validate(
+            {
+                "model": {
+                    "base_url": "https://example.test",
+                    "api_key": "secret",
+                    "analysis_model": "gpt-test",
+                }
+            }
+        ),
+    )
+
+    assert diagnoses[0].fault_type == "implementation"
+    assert diagnoses[0].sub_tags == ["logic_error"]
+    assert len(prompts) == 3
+    assert "fault_type" in prompts[2]
+    assert "sub_tags" in prompts[2]
 
 
 def test_run_diagnose_maps_noncanonical_secondary_tags_back_to_allowed_taxonomy(tmp_path: Path) -> None:

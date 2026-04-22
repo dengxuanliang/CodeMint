@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import time
@@ -20,6 +21,7 @@ from codemint.models.weakness import WeaknessReport
 from codemint.prompts.registry import load_prompt
 from codemint.run.dry_run import RunStage
 from codemint.synthesize.allocation import select_top_weaknesses, weakness_key
+from codemint.synthesize.allocation import allocate_specs
 from codemint.synthesize.pipeline import read_weakness_report, run_synthesize
 
 
@@ -32,7 +34,7 @@ class RunPipelineResult:
 
 DiagnoseStage = Callable[[list, Path], list[DiagnosisRecord]]
 AggregateStage = Callable[[list[DiagnosisRecord], Path], WeaknessReport]
-SynthesizeStage = Callable[[WeaknessReport, Path], list[SpecRecord]]
+SynthesizeStage = Callable[..., list[SpecRecord]]
 ProgressCallback = Callable[[dict], None]
 
 
@@ -85,8 +87,9 @@ def run_pipeline(
                 tasks,
                 artifacts["diagnoses"],
                 config=resolved_config,
+                progress_callback=progress_callback,
             )
-        emit_progress("diagnose", "completed", len(diagnoses), len(tasks))
+        emit_progress("diagnose", "completed", min(len(_read_diagnoses(artifacts["diagnoses"])), len(tasks)), len(tasks))
         stages_executed.append("diagnose")
         rerun_downstream = True
     else:
@@ -122,18 +125,28 @@ def run_pipeline(
         or _should_run_synthesize(artifacts["specs"], report)
     )
     if should_run_synthesize:
-        total_specs = len(report.weaknesses)
+        total_specs = _planned_synthesize_slot_total(report, resolved_config)
         emit_progress("synthesize", "started", 0, total_specs)
         if artifacts["specs"].exists():
             existing_specs = _read_specs(artifacts["specs"])
         if run_synthesize_stage is not None:
-            specs = run_synthesize_stage(report, artifacts["specs"])
+            kwargs = {}
+            try:
+                parameters = inspect.signature(run_synthesize_stage).parameters
+            except (TypeError, ValueError):
+                parameters = {}
+            accepts_kwargs = any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values())
+            if "diagnoses" in parameters or accepts_kwargs:
+                kwargs["diagnoses"] = diagnoses
+            if "existing_specs" in parameters or accepts_kwargs:
+                kwargs["existing_specs"] = existing_specs
+            specs = run_synthesize_stage(report, artifacts["specs"], **kwargs)
         else:
             specs = run_synthesize(
                 report,
                 artifacts["specs"],
                 config=resolved_config,
-                diagnoses=diagnoses if "diagnose" in stages_executed else None,
+                diagnoses=diagnoses,
                 existing_specs=existing_specs,
                 progress_callback=progress_callback,
             )
@@ -245,6 +258,14 @@ def _build_summary(
 def _selected_stages(start_from: RunStage) -> tuple[RunStage, ...]:
     ordered: tuple[RunStage, ...] = ("diagnose", "aggregate", "synthesize")
     return ordered[ordered.index(start_from) :]
+
+
+def _planned_synthesize_slot_total(report: WeaknessReport, config: CodeMintConfig) -> int:
+    selected = select_top_weaknesses(report.weaknesses, config.synthesize.top_n)
+    if not selected:
+        return 0
+    allocated = allocate_specs(report, config.synthesize)
+    return sum(allocated.get(weakness_key(weakness), config.synthesize.specs_per_weakness) for weakness in selected)
 
 
 def _error_count(path: Path) -> int:

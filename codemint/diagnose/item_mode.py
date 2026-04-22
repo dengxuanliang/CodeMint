@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from codemint.config import CodeMintConfig
 from codemint.diagnose.confirm import (
     ConfirmAnalyzer,
@@ -14,7 +16,7 @@ from codemint.diagnose.payloads import build_diagnose_payload
 from codemint.diagnose.resume import find_missing_task_ids
 from codemint.io.jsonl import append_jsonl, read_jsonl
 from codemint.modeling.client import ModelClient
-from codemint.modeling.parser import parse_with_retry
+from codemint.modeling.parser import _normalize_json_text, parse_with_retry
 from codemint.models.diagnosis import DiagnosisEvidence, DiagnosisRecord, SUCCESS_LIKE_SUB_TAGS
 from codemint.models.task import TaskRecord
 from codemint.prompts.registry import load_prompt
@@ -60,6 +62,7 @@ def run_item_mode(
     config: CodeMintConfig | None = None,
     confirm_analyzer: ConfirmAnalyzer | None = None,
     deep_analyzer: DeepAnalyzer | None = None,
+    progress_callback=None,
 ) -> list[DiagnosisRecord]:
     active_rules = build_rules() if rules is None else rules
     resolved_config = config or CodeMintConfig()
@@ -71,13 +74,25 @@ def run_item_mode(
 
     missing_task_ids = set(find_missing_task_ids(output_path, [task.task_id for task in tasks]))
     new_diagnoses: list[DiagnosisRecord] = []
+    processed = len(existing_diagnoses)
     for task in tasks:
         if task.task_id not in missing_task_ids:
             continue
-        new_diagnoses.append(_diagnose_task(task, engine, confirmer, deep))
-
-    if new_diagnoses:
-        append_jsonl(output_path, [diagnosis.model_dump(mode="json") for diagnosis in new_diagnoses])
+        diagnosis = _diagnose_task(task, engine, confirmer, deep)
+        new_diagnoses.append(diagnosis)
+        append_jsonl(output_path, [diagnosis.model_dump(mode="json")])
+        processed += 1
+        if progress_callback is not None:
+            progress_callback(
+                {
+                    "stage": "diagnose",
+                    "status": "running",
+                    "processed": processed,
+                    "total": len(tasks),
+                    "errors": 0,
+                    "eta_seconds": max(len(tasks) - processed, 0) * 3,
+                }
+            )
 
     return existing_diagnoses + new_diagnoses
 
@@ -269,18 +284,15 @@ def _build_model_client(config: CodeMintConfig) -> ModelClient | None:
 
 
 def _parse_diagnosis_with_retry(invoke) -> DiagnosisRecord:
-    record = parse_with_retry(DiagnosisRecord, invoke)
+    record = _parse_diagnosis_schema_with_retry(invoke)
     normalized = _normalize_diagnosis_record(record)
     error = _taxonomy_error(normalized)
     if error is None:
         return normalized
 
-    reparsed = parse_with_retry(
-        DiagnosisRecord,
-        lambda _: invoke(
-            f"{error} Use only the allowed taxonomy: "
-            f"{sorted(_ALLOWED_FAILURE_SUB_TAGS)} plus success-like tags "
-            f"{sorted(SUCCESS_LIKE_SUB_TAGS)}."
+    reparsed = _parse_diagnosis_schema_with_retry(
+        lambda format_error: invoke(
+            _taxonomy_retry_prompt(error, format_error)
         ),
     )
     normalized_retry = _normalize_diagnosis_record(reparsed)
@@ -288,6 +300,54 @@ def _parse_diagnosis_with_retry(invoke) -> DiagnosisRecord:
     if error_retry is not None:
         raise ValueError(error_retry)
     return normalized_retry
+
+
+def _taxonomy_retry_prompt(error: str, format_error: str | None) -> str:
+    prompt = (
+        f"{error} Use only the allowed taxonomy: "
+        f"{sorted(_ALLOWED_FAILURE_SUB_TAGS)} plus success-like tags "
+        f"{sorted(SUCCESS_LIKE_SUB_TAGS)}. "
+        "`fault_type` must be one of comprehension, modeling, implementation, edge_handling, or surface; "
+        "canonical weakness labels belong in `sub_tags`, not `fault_type`."
+    )
+    if format_error:
+        prompt += f" Additional schema correction: {format_error}"
+    return prompt
+
+
+def _parse_diagnosis_schema_with_retry(invoke) -> DiagnosisRecord:
+    format_error: str | None = None
+    last_error: ValidationError | None = None
+    for _ in range(3):
+        try:
+            return DiagnosisRecord.model_validate_json(_normalize_json_text(invoke(format_error)))
+        except ValidationError as error:
+            last_error = error
+            format_error = _diagnosis_format_error(error)
+
+    assert last_error is not None
+    raise last_error
+
+
+def _diagnosis_format_error(error: ValidationError) -> str:
+    fault_type_errors = [
+        item
+        for item in error.errors()
+        if item.get("loc") == ("fault_type",)
+    ]
+    if fault_type_errors:
+        return (
+            "Response did not match DiagnosisRecord schema. `fault_type` must be one of "
+            "comprehension, modeling, implementation, edge_handling, or surface. "
+            "Canonical weakness labels such as logic_error, markdown_formatting, "
+            "missing_code_block, syntax_error, function_name_mismatch, and "
+            "non_executable_code belong in `sub_tags`, not in `fault_type`. "
+            f"Error: {error}"
+        )
+    return (
+        "Response did not match schema DiagnosisRecord. "
+        f"Return valid JSON matching the schema. Error: {error}"
+    )
 
 
 def _taxonomy_error(record: DiagnosisRecord) -> str | None:

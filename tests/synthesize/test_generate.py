@@ -634,6 +634,139 @@ def test_syntax_error_spec_gets_syntactic_completeness_constraints() -> None:
     assert any("missing colons" in item or "missing bodies" in item for item in spec.problem_spec.must_avoid)
 
 
+def test_function_name_mismatch_constraints_use_evidence_entrypoint_not_solve() -> None:
+    from codemint.synthesize.generate import generate_spec
+
+    weakness = WeaknessEntry(
+        rank=1,
+        fault_type="implementation",
+        sub_tags=["function_name_mismatch"],
+        frequency=1,
+        sample_task_ids=[234],
+        trainability=0.6,
+        collective_diagnosis=CollectiveDiagnosis(
+            refined_root_cause="Function entry point name mismatch.",
+            capability_cliff="Harness cannot call the generated function.",
+            misdiagnosed_ids=[],
+            misdiagnosis_corrections={},
+            cluster_coherence=0.95,
+        ),
+    )
+
+    spec = generate_spec(
+        weakness,
+        diversity_tags=DiversityTags(
+            narrative_theme="warehouses",
+            data_structure="array",
+            constraint_scale="small",
+        ),
+        invoke_model=lambda prompt: {
+            "algorithm_type": "simulation",
+            "difficulty": "medium",
+            "narrative_theme": "warehouses",
+            "constraints": {
+                "n_range": [1, 100],
+                "value_range": [0, 1000],
+                "time_limit": "1s",
+                "memory_limit": "256MB",
+            },
+            "key_trap": "The trap repeats the original wrong callable `compute_quantiles` instead of `get_column_quantiles`.",
+            "must_cover": ["exact callable entry point get_column_quantiles(csv_path, quantiles)"],
+            "must_avoid": ["alternate public function names such as compute_quantiles"],
+            "verification_spec": {
+                "min_test_cases": 4,
+                "must_include_edge_cases": ["single csv file"],
+                "brute_force_verifiable": True,
+                "brute_force_complexity_limit": "O(n^2)",
+            },
+            "generation_hints": {
+                "solution_approach": "Expose get_column_quantiles.",
+                "common_wrong_approach": "Expose compute_quantiles.",
+                "distinguishing_test": "Call get_column_quantiles directly.",
+            },
+            "language_constraint": {
+                "target_languages": ["python"],
+                "language_specific": False,
+            },
+        },
+        original_evidence={
+            "wrong_line": "def compute_quantiles(csv_path, quantiles):",
+            "correct_approach": "Define the exact get_column_quantiles(csv_path, quantiles) entry point expected by the harness.",
+            "failed_test": "NameError: name 'get_column_quantiles' is not defined",
+        },
+        spec_index=1,
+    )
+
+    cover_text = " ".join(spec.problem_spec.must_cover)
+    assert "get_column_quantiles" in cover_text
+    assert "solve(x)" not in cover_text
+
+
+def test_generated_spec_rejects_new_function_names_not_grounded_in_evidence() -> None:
+    from codemint.synthesize.generate import generate_spec
+
+    weakness = WeaknessEntry(
+        rank=1,
+        fault_type="implementation",
+        sub_tags=["function_name_mismatch"],
+        frequency=1,
+        sample_task_ids=[234],
+        trainability=0.6,
+        collective_diagnosis=CollectiveDiagnosis(
+            refined_root_cause="Function entry point name mismatch.",
+            capability_cliff="Harness cannot call the generated function.",
+            misdiagnosed_ids=[],
+            misdiagnosis_corrections={},
+            cluster_coherence=0.95,
+        ),
+    )
+
+    with pytest.raises(ValueError, match="ungrounded function name"):
+        generate_spec(
+            weakness,
+            diversity_tags=DiversityTags(
+                narrative_theme="warehouses",
+                data_structure="array",
+                constraint_scale="small",
+            ),
+            invoke_model=lambda prompt: {
+                "algorithm_type": "simulation",
+                "difficulty": "medium",
+                "narrative_theme": "warehouses",
+                "constraints": {
+                    "n_range": [1, 100],
+                    "value_range": [0, 1000],
+                    "time_limit": "1s",
+                    "memory_limit": "256MB",
+                },
+                "key_trap": "The trap repeats the original wrong callable `compute_quantiles`.",
+                "must_cover": ["define exactly one public function named calculate_warehouse_profit"],
+                "must_avoid": ["alternate public function names such as compute_quantiles"],
+                "verification_spec": {
+                    "min_test_cases": 4,
+                    "must_include_edge_cases": ["single csv file"],
+                    "brute_force_verifiable": True,
+                    "brute_force_complexity_limit": "O(n^2)",
+                },
+                "generation_hints": {
+                    "solution_approach": "Expose calculate_warehouse_profit.",
+                    "common_wrong_approach": "Expose compute_quantiles.",
+                    "distinguishing_test": "Call calculate_warehouse_profit directly.",
+                },
+                "language_constraint": {
+                    "target_languages": ["python"],
+                    "language_specific": False,
+                },
+            },
+            original_evidence={
+                "wrong_line": "def compute_quantiles(csv_path, quantiles):",
+                "correct_approach": "Define the exact get_column_quantiles(csv_path, quantiles) entry point expected by the harness.",
+                "failed_test": "NameError: name 'get_column_quantiles' is not defined",
+            },
+            spec_index=1,
+        )
+
+
 def _weakness() -> WeaknessEntry:
     return WeaknessEntry(
         rank=1,

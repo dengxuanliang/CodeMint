@@ -34,14 +34,26 @@ def test_run_aggregate_repairs_clusters_and_writes_report(tmp_path: Path) -> Non
     assert output_path.exists()
     assert verify_calls == [(1, "cross_model"), (2, "cross_model")]
     assert report.weaknesses[0].fault_type == "implementation"
-    assert report.weaknesses[0].sub_tags == ["off_by_one"]
+    assert report.weaknesses[0].sub_tags == ["logic_error"]
     assert report.weaknesses[0].frequency == 2
     assert report.rankings.by_frequency == [1]
     assert report.rankings.by_difficulty == [1]
     assert report.rankings.by_trainability == [1]
-    assert report.tag_mappings == {"off_by_one": "off_by_one"}
+    assert report.tag_mappings == {"off_by_one": "logic_error"}
     written = output_path.read_text(encoding="utf-8")
     assert '"frequency":2' in written
+
+
+def test_run_aggregate_normalizes_non_taxonomy_tags_to_canonical_weaknesses(tmp_path: Path) -> None:
+    from codemint.aggregate.pipeline import run_aggregate
+
+    report = run_aggregate(
+        [_diagnosis(101, "implementation", ["off_by_one"])],
+        tmp_path / "weaknesses.json",
+    )
+
+    assert report.weaknesses[0].sub_tags == ["logic_error"]
+    assert report.tag_mappings["off_by_one"] == "logic_error"
 
 
 def test_run_aggregate_default_path_applies_verification_metadata(tmp_path: Path) -> None:
@@ -111,9 +123,9 @@ def test_run_aggregate_emits_fine_grained_progress_per_cluster(tmp_path: Path) -
         progress_callback=events.append,
     )
 
-    assert len(events) >= 2
-    assert [event["processed"] for event in events] == [1, 2]
-    assert all(event["total"] == 2 for event in events)
+    assert len(events) == 1
+    assert [event["processed"] for event in events] == [1]
+    assert all(event["total"] == 1 for event in events)
 
 
 def test_run_aggregate_uses_model_client_when_configured(
@@ -202,10 +214,10 @@ def test_run_aggregate_normalizes_real_model_style_output(
     )
 
     weakness = report.weaknesses[0]
-    assert weakness.sub_tags == ["off_by_one"]
+    assert weakness.sub_tags == ["logic_error"]
     assert weakness.collective_diagnosis.misdiagnosed_ids == [31]
     assert weakness.collective_diagnosis.cluster_coherence == 0.91
-    assert report.tag_mappings["index_bounds"] == "off_by_one"
+    assert report.tag_mappings["index_bounds"] == "logic_error"
 
 
 def test_run_aggregate_filters_non_failure_diagnoses(tmp_path: Path) -> None:
@@ -278,9 +290,9 @@ def test_run_aggregate_keeps_function_name_mismatch_distinct_from_other_surface_
         collective_analyze=collective_stub,
     )
 
-    assert [entry.sub_tags for entry in report.weaknesses] == [["function_name_mismatch"], ["wrong_function_name"]]
+    assert [entry.sub_tags for entry in report.weaknesses] == [["function_name_mismatch"]]
     assert report.tag_mappings["function_name_mismatch"] == "function_name_mismatch"
-    assert report.tag_mappings["wrong_function_name"] == "wrong_function_name"
+    assert report.tag_mappings["wrong_function_name"] == "function_name_mismatch"
 
 
 def test_run_aggregate_keeps_markdown_formatting_distinct_from_other_surface_tags(
@@ -315,9 +327,9 @@ def test_run_aggregate_keeps_markdown_formatting_distinct_from_other_surface_tag
         collective_analyze=collective_stub,
     )
 
-    assert [entry.sub_tags for entry in report.weaknesses] == [["extraneous_characters"], ["markdown_formatting"]]
+    assert [entry.sub_tags for entry in report.weaknesses] == [["markdown_formatting"]]
     assert report.tag_mappings["markdown_formatting"] == "markdown_formatting"
-    assert report.tag_mappings["extraneous_characters"] == "extraneous_characters"
+    assert report.tag_mappings["extraneous_characters"] == "markdown_formatting"
 
 
 def test_run_aggregate_keeps_missing_code_block_distinct_from_syntax_error(
@@ -432,7 +444,7 @@ def test_run_aggregate_preserves_fallback_deep_analysis_placeholders_without_rec
     report = run_aggregate(diagnoses, tmp_path / "weaknesses.json")
 
     weakness_tags = [entry.sub_tags[0] for entry in report.weaknesses]
-    assert weakness_tags == ["deep_analysis"]
+    assert weakness_tags == ["logic_error"]
 
 
 def test_run_aggregate_does_not_reclassify_non_fallback_model_diagnoses(
@@ -461,7 +473,7 @@ def test_run_aggregate_does_not_reclassify_non_fallback_model_diagnoses(
 
     report = run_aggregate(diagnoses, tmp_path / "weaknesses.json")
 
-    assert [entry.sub_tags for entry in report.weaknesses] == [["deep_analysis"]]
+    assert [entry.sub_tags for entry in report.weaknesses] == [["logic_error"]]
 
 
 def test_run_aggregate_does_not_promote_logic_error_from_secondary_tag_on_function_name_mismatch(

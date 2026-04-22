@@ -66,6 +66,7 @@ def generate_spec(
     key_trap = _require_evidence_grounding(response.key_trap, original_evidence)
     must_cover = _augment_must_cover(weakness, response.must_cover)
     must_avoid = _augment_must_avoid(weakness, response.must_avoid)
+    _validate_function_name_grounding(weakness, key_trap, must_cover, must_avoid, response.generation_hints, original_evidence)
 
     return SpecRecord(
         spec_id=f"spec-{spec_index:04d}",
@@ -333,14 +334,16 @@ def _algorithm_type_for_fault(fault_type: str) -> str:
 def _augment_must_cover(weakness: WeaknessEntry, must_cover: list[str]) -> list[str]:
     augmented = list(must_cover)
     if "function_name_mismatch" in weakness.sub_tags:
+        target_entrypoint = _target_entrypoint_from_evidence(weakness, augmented)
         _append_if_missing(
             augmented,
-            "Require a single exact callable entry point named solve(x) for the public harness contract.",
+            f"Require a single exact callable public entry point named {target_entrypoint}.",
         )
     if "missing_code_block" in weakness.sub_tags:
+        target_entrypoint = _target_entrypoint_from_evidence(weakness, augmented)
         _append_if_missing(
             augmented,
-            "Require executable code output with a callable solve function, not prose or explanation.",
+            f"Require executable code output with the requested callable entry point {target_entrypoint}, not prose or explanation.",
         )
     if "markdown_formatting" in weakness.sub_tags:
         _append_if_missing(
@@ -348,9 +351,15 @@ def _augment_must_cover(weakness: WeaknessEntry, must_cover: list[str]) -> list[
             "Require raw executable code output without markdown fences or wrapping delimiters.",
         )
     if "syntax_error" in weakness.sub_tags:
+        target_entrypoint = _target_entrypoint_from_evidence(weakness, augmented)
         _append_if_missing(
             augmented,
-            "Require syntactically complete executable code with a valid solve(x) definition.",
+            f"Require syntactically complete executable code with a valid {target_entrypoint} definition.",
+        )
+    if "non_executable_code" in weakness.sub_tags:
+        _append_if_missing(
+            augmented,
+            "Require runnable code output with the requested executable implementation present.",
         )
     return augmented
 
@@ -377,6 +386,11 @@ def _augment_must_avoid(weakness: WeaknessEntry, must_avoid: list[str]) -> list[
             augmented,
             "Do not emit incomplete code such as missing colons, missing bodies, or malformed function headers.",
         )
+    if "non_executable_code" in weakness.sub_tags:
+        _append_if_missing(
+            augmented,
+            "Do not return explanation-only, translation-only, prompt echo, or other prose instead of executable code.",
+        )
     return augmented
 
 
@@ -384,6 +398,70 @@ def _append_if_missing(items: list[str], candidate: str) -> None:
     normalized_candidate = candidate.strip().lower()
     if not any(item.strip().lower() == normalized_candidate for item in items):
         items.append(candidate)
+
+
+def _target_entrypoint_from_evidence(weakness: WeaknessEntry, existing_cover: list[str]) -> str:
+    text = " ".join(
+        [
+            *existing_cover,
+            weakness.collective_diagnosis.refined_root_cause,
+            weakness.collective_diagnosis.capability_cliff,
+        ]
+    )
+    identifiers = _function_names_in_text(text)
+    if identifiers:
+        return identifiers[-1]
+    return "the requested entry point from the test harness"
+
+
+def _validate_function_name_grounding(
+    weakness: WeaknessEntry,
+    key_trap: str,
+    must_cover: list[str],
+    must_avoid: list[str],
+    generation_hints: GenerationHints,
+    original_evidence: dict[str, str],
+) -> None:
+    if "function_name_mismatch" not in weakness.sub_tags:
+        return
+
+    evidence_names = set(_function_names_in_text(" ".join(original_evidence.values())))
+    candidate_text = " ".join(
+        [
+            key_trap,
+            *must_cover,
+            *must_avoid,
+            generation_hints.solution_approach,
+            generation_hints.common_wrong_approach,
+            generation_hints.distinguishing_test,
+        ]
+    )
+    candidate_names = set(_function_names_in_text(candidate_text))
+    ungrounded = sorted(
+        name
+        for name in candidate_names
+        if name not in evidence_names and name not in {"solve", "solver", "main", "helper"}
+    )
+    if ungrounded:
+        raise ValueError(f"Generated spec contains ungrounded function name(s): {ungrounded}")
+
+
+def _function_names_in_text(text: str) -> list[str]:
+    names: list[str] = []
+    patterns = [
+        r"\bdef\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+        r"\bfunction\s+named\s+['`\"]?([A-Za-z_][A-Za-z0-9_]*)",
+        r"\bnamed\s+['`\"]([A-Za-z_][A-Za-z0-9_]*)",
+        r"\bentry point\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+        r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+        r"NameError:\s+name\s+['\"]([A-Za-z_][A-Za-z0-9_]*)['\"]",
+    ]
+    for pattern in patterns:
+        for match in re.findall(pattern, text):
+            name = str(match)
+            if name not in names and name not in {"function", "return", "assert"}:
+                names.append(name)
+    return names
 
 
 def _normalize_string_list(value: Any) -> list[str]:

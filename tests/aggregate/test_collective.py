@@ -88,7 +88,7 @@ def test_collective_diagnosis_reclassifies_misdiagnosed_ids(tmp_path: Path) -> N
     assert implementation.sample_task_ids == [10]
     assert implementation.collective_diagnosis.misdiagnosed_ids == [11]
     assert implementation.collective_diagnosis.misdiagnosis_corrections == {"11": "modeling:state_tracking"}
-    assert modeling.sub_tags == ["state_tracking"]
+    assert modeling.sub_tags == ["logic_error"]
     assert modeling.sample_task_ids == [11]
 
 
@@ -199,9 +199,9 @@ def test_emitted_cluster_cannot_survive_later_canonical_merge(tmp_path: Path) ->
     )
 
     assert len(report.weaknesses) == 1
-    assert report.weaknesses[0].sub_tags == ["tag_c"]
+    assert report.weaknesses[0].sub_tags == ["logic_error"]
     assert report.weaknesses[0].sample_task_ids == [1, 2, 3]
-    assert report.tag_mappings == {"tag_a": "tag_c", "tag_b": "tag_c", "tag_c": "tag_c"}
+    assert report.tag_mappings == {"tag_a": "logic_error", "tag_b": "logic_error", "tag_c": "logic_error"}
 
 
 def test_collective_diagnosis_reflects_merged_evidence_and_task_ids(tmp_path: Path) -> None:
@@ -284,7 +284,7 @@ def test_malformed_misdiagnosis_corrections_are_ignored_safely(tmp_path: Path) -
 
     assert len(report.weaknesses) == 1
     assert report.weaknesses[0].fault_type == "implementation"
-    assert report.weaknesses[0].sub_tags == ["loop_bound"]
+    assert report.weaknesses[0].sub_tags == ["logic_error"]
     assert report.weaknesses[0].sample_task_ids == [21, 22]
     assert report.weaknesses[0].collective_diagnosis.misdiagnosis_corrections == {
         "abc": "modeling:state_tracking",
@@ -342,9 +342,9 @@ def test_reclassified_tag_is_renormalized_to_canonical_mapping(tmp_path: Path) -
     )
 
     modeling = next(entry for entry in report.weaknesses if entry.fault_type == "modeling")
-    assert modeling.sub_tags == ["off_by_one"]
+    assert modeling.sub_tags == ["logic_error"]
     assert modeling.sample_task_ids == [31]
-    assert report.tag_mappings["index_bounds"] == "off_by_one"
+    assert report.tag_mappings["index_bounds"] == "logic_error"
 
 
 def test_collective_diagnosis_does_not_merge_function_name_mismatch() -> None:

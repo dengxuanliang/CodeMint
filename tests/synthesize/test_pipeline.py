@@ -166,6 +166,161 @@ def test_build_original_evidence_map_prefers_function_name_mismatch_sample_evide
     assert "solve(x)" in evidence_map["function_name_mismatch"]["correct_approach"]
 
 
+def test_run_synthesize_uses_sample_specific_evidence_per_slot_for_logic_error(tmp_path: Path) -> None:
+    from codemint.synthesize.pipeline import run_synthesize
+
+    report = WeaknessReport(
+        weaknesses=[
+            WeaknessEntry(
+                rank=1,
+                fault_type="modeling",
+                sub_tags=["logic_error"],
+                frequency=2,
+                sample_task_ids=[821, 824],
+                trainability=0.6,
+                collective_diagnosis=CollectiveDiagnosis(
+                    refined_root_cause="Hidden logic must be inferred from tests.",
+                    capability_cliff="Breaks when output rules are implicit in examples.",
+                    misdiagnosed_ids=[],
+                    misdiagnosis_corrections={},
+                    cluster_coherence=0.84,
+                ),
+            )
+        ],
+        rankings=RankingSet(by_frequency=[1], by_difficulty=[1], by_trainability=[1]),
+        causal_chains=[CausalChain(root="other_root", downstream=[], training_priority="medium")],
+        tag_mappings={"logic_error": "logic_error"},
+    )
+    diagnoses = [
+        DiagnosisRecord(
+            task_id=821,
+            fault_type="modeling",
+            sub_tags=["logic_error"],
+            severity="medium",
+            description="Counts all uppercase letters instead of uppercase vowels on even indices.",
+            evidence=DiagnosisEvidence(
+                wrong_line='sum(grepl("[A-Z]", chars))',
+                correct_approach='Count only uppercase vowels with chars[seq(1, length(chars), by=2)].',
+                failed_test="candidate('aBCdEf') should return 1",
+            ),
+            enriched_labels={},
+            confidence=0.8,
+            diagnosis_source="model_deep",
+            prompt_version="test-v1",
+        ),
+        DiagnosisRecord(
+            task_id=824,
+            fault_type="modeling",
+            sub_tags=["logic_error"],
+            severity="medium",
+            description="Always sorts ascending instead of switching order from digit-frequency parity.",
+            evidence=DiagnosisEvidence(
+                wrong_line="sort(array)",
+                correct_approach="Sort descending when the maximum digit frequency is even.",
+                failed_test="candidate(c(2,4,3,0,1,5,6)) should return c(6,5,4,3,2,1,0)",
+            ),
+            enriched_labels={},
+            confidence=0.8,
+            diagnosis_source="model_deep",
+            prompt_version="test-v1",
+        ),
+    ]
+
+    def invoke_model(payload: dict) -> dict:
+        wrong_line = payload["original_evidence"]["wrong_line"]
+        if "|" in wrong_line:
+            return {
+                "algorithm_type": "simulation",
+                "difficulty": "medium",
+                "narrative_theme": payload["diversity_tags"]["narrative_theme"],
+                "constraints": {
+                    "n_range": [1, 100],
+                    "value_range": [0, 1000],
+                    "time_limit": "1s",
+                    "memory_limit": "256MB",
+                },
+                "key_trap": "This task should reference the original evidence and punish the same mistake.",
+                "must_cover": ["recover the hidden rule from tests"],
+                "must_avoid": ["generic sorting task"],
+                "verification_spec": {
+                    "min_test_cases": 4,
+                    "must_include_edge_cases": ["single value input"],
+                    "brute_force_verifiable": True,
+                    "brute_force_complexity_limit": "O(n^2)",
+                },
+                "generation_hints": {
+                    "solution_approach": payload["original_evidence"]["correct_approach"],
+                    "common_wrong_approach": wrong_line,
+                    "distinguishing_test": payload["original_evidence"]["failed_test"],
+                },
+                "language_constraint": {
+                    "target_languages": ["r"],
+                    "language_specific": False,
+                },
+            }
+        if 'sum(grepl("[A-Z]", chars))' in wrong_line:
+            key_trap = (
+                'The trap repeats `sum(grepl("[A-Z]", chars))` instead of counting uppercase vowels '
+                "only at the required even-index positions."
+            )
+        else:
+            key_trap = (
+                "The trap repeats `sort(array)` instead of reversing the order when the maximum digit "
+                "frequency is even."
+            )
+        return {
+            "algorithm_type": "simulation",
+            "difficulty": "medium",
+            "narrative_theme": payload["diversity_tags"]["narrative_theme"],
+            "constraints": {
+                "n_range": [1, 100],
+                "value_range": [0, 1000],
+                "time_limit": "1s",
+                "memory_limit": "256MB",
+            },
+            "key_trap": key_trap,
+            "must_cover": ["recover the hidden rule from tests"],
+            "must_avoid": ["generic sorting task"],
+            "verification_spec": {
+                "min_test_cases": 4,
+                "must_include_edge_cases": [payload["original_evidence"]["failed_test"]],
+                "brute_force_verifiable": True,
+                "brute_force_complexity_limit": "O(n^2)",
+            },
+            "generation_hints": {
+                "solution_approach": payload["original_evidence"]["correct_approach"],
+                "common_wrong_approach": wrong_line,
+                "distinguishing_test": payload["original_evidence"]["failed_test"],
+            },
+            "language_constraint": {
+                "target_languages": ["r"],
+                "language_specific": False,
+            },
+        }
+
+    specs = run_synthesize(
+        report,
+        tmp_path / "specs.jsonl",
+        config=CodeMintConfig.model_validate(
+                {
+                    "synthesize": {
+                        "specs_per_weakness": 2,
+                        "max_per_weakness": 2,
+                        "top_n": 1,
+                        "narrative_themes": {"generic": ["strings"], "domain_adaptive": False},
+                        "data_structures": ["array", "string"],
+                    }
+                }
+            ),
+        diagnoses=diagnoses,
+        invoke_model=invoke_model,
+    )
+
+    assert len(specs) == 2
+    assert 'sum(grepl("[A-Z]", chars))' in specs[0].problem_spec.key_trap
+    assert "sort(array)" in specs[1].problem_spec.key_trap
+
+
 def test_synthesize_command_reads_real_evidence_from_diagnoses_artifact(tmp_path: Path) -> None:
     run_dir = tmp_path / "artifacts" / "demo-run"
     run_dir.mkdir(parents=True)
@@ -1400,6 +1555,51 @@ def test_generate_or_log_failure_uses_builtin_fallback_for_markdown_formatting(t
     assert any("raw executable code" in item.lower() for item in spec.problem_spec.must_cover)
 
 
+def test_markdown_formatting_fallback_references_non_python_original_evidence(tmp_path: Path) -> None:
+    from codemint.synthesize.pipeline import _generate_or_log_failure
+
+    weakness = WeaknessEntry(
+        rank=1,
+        fault_type="surface",
+        sub_tags=["markdown_formatting"],
+        frequency=1,
+        sample_task_ids=[815],
+        trainability=0.3,
+        collective_diagnosis=CollectiveDiagnosis(
+            refined_root_cause="Markdown fences pollute raw R output.",
+            capability_cliff="Execution fails when formatting wrappers are preserved.",
+            misdiagnosed_ids=[],
+            misdiagnosis_corrections={},
+            cluster_coherence=0.9,
+        ),
+    )
+
+    spec = _generate_or_log_failure(
+        weakness,
+        output_path=tmp_path / "specs.jsonl",
+        diversity_tags=DiversityTags(
+            narrative_theme="warehouses",
+            data_structure="array",
+            constraint_scale="small",
+        ),
+        spec_index=1,
+        difficulty="medium",
+        invoke_model=lambda payload: (_ for _ in ()).throw(ValueError("model failed")),
+        feasibility_check=lambda payload: {"accepted": True, "reason": "ok"},
+        original_evidence={
+            "wrong_line": "```R\nfilter_by_prefix <- function(strings, prefix) {\n  strings[startsWith(strings, prefix)]\n}\n```",
+            "correct_approach": "Omit the ```R and ``` markdown fences and output only the raw executable R code.",
+            "failed_test": "R source failed because markdown fences were present.",
+        },
+        overlap_threshold=0.5,
+        existing_specs=[],
+        max_attempts=1,
+    )
+
+    assert spec is not None
+    assert "filter_by_prefix" in spec.problem_spec.key_trap
+
+
 def test_generate_or_log_failure_uses_builtin_fallback_for_missing_code_block(tmp_path: Path) -> None:
     from codemint.synthesize.pipeline import _generate_or_log_failure
 
@@ -1449,6 +1649,52 @@ def test_generate_or_log_failure_uses_builtin_fallback_for_missing_code_block(tm
     assert errors[-1]["weakness"] == "missing_code_block"
 
 
+def test_missing_code_block_fallback_grounds_non_solve_entrypoint_from_evidence(tmp_path: Path) -> None:
+    from codemint.synthesize.pipeline import _generate_or_log_failure
+
+    weakness = WeaknessEntry(
+        rank=1,
+        fault_type="comprehension",
+        sub_tags=["missing_code_block"],
+        frequency=1,
+        sample_task_ids=[239],
+        trainability=0.5,
+        collective_diagnosis=CollectiveDiagnosis(
+            refined_root_cause="Prompt echo replaces requested code generation.",
+            capability_cliff="Breaks when the model translates or repeats instructions instead of emitting code.",
+            misdiagnosed_ids=[],
+            misdiagnosis_corrections={},
+            cluster_coherence=0.9,
+        ),
+    )
+
+    spec = _generate_or_log_failure(
+        weakness,
+        output_path=tmp_path / "specs.jsonl",
+        diversity_tags=DiversityTags(
+            narrative_theme="warehouses",
+            data_structure="array",
+            constraint_scale="small",
+        ),
+        spec_index=1,
+        difficulty="medium",
+        invoke_model=lambda payload: (_ for _ in ()).throw(ValueError("model failed")),
+        feasibility_check=lambda payload: {"accepted": True, "reason": "ok"},
+        original_evidence={
+            "wrong_line": '请帮我使用 uvloop 库实现一个异步函数 hello()。该函数应该打印 "Hello World!"。',
+            "correct_approach": "Generate the async hello() function using uvloop.",
+            "failed_test": "Harness expects executable Python defining hello().",
+        },
+        overlap_threshold=0.5,
+        existing_specs=[],
+        max_attempts=1,
+    )
+
+    assert spec is not None
+    assert "hello" in spec.problem_spec.key_trap
+    assert not any("solve function" in item.lower() for item in spec.problem_spec.must_cover)
+
+
 def test_generate_or_log_failure_uses_builtin_fallback_for_syntax_error(tmp_path: Path) -> None:
     from codemint.synthesize.pipeline import _generate_or_log_failure
 
@@ -1493,6 +1739,52 @@ def test_generate_or_log_failure_uses_builtin_fallback_for_syntax_error(tmp_path
     assert spec is not None
     assert spec.target_weakness.sub_tags == ["syntax_error"]
     assert any("syntactically complete executable code" in item.lower() for item in spec.problem_spec.must_cover)
+
+
+def test_generate_or_log_failure_uses_builtin_fallback_for_non_executable_code(tmp_path: Path) -> None:
+    from codemint.synthesize.pipeline import _generate_or_log_failure
+
+    weakness = WeaknessEntry(
+        rank=1,
+        fault_type="surface",
+        sub_tags=["non_executable_code"],
+        frequency=1,
+        sample_task_ids=[226],
+        trainability=0.3,
+        collective_diagnosis=CollectiveDiagnosis(
+            refined_root_cause="The model echoes or translates the prompt instead of producing runnable code.",
+            capability_cliff="Instruction-following failures produce text that cannot be executed by the harness.",
+            misdiagnosed_ids=[],
+            misdiagnosis_corrections={},
+            cluster_coherence=0.91,
+        ),
+    )
+
+    spec = _generate_or_log_failure(
+        weakness,
+        output_path=tmp_path / "specs.jsonl",
+        diversity_tags=DiversityTags(
+            narrative_theme="warehouses",
+            data_structure="array",
+            constraint_scale="small",
+        ),
+        spec_index=1,
+        difficulty="medium",
+        invoke_model=lambda payload: (_ for _ in ()).throw(ValueError("model failed")),
+        feasibility_check=lambda payload: {"accepted": True, "reason": "ok"},
+        original_evidence={
+            "wrong_line": "Translate the text portion as requested while keeping the code block the same.",
+            "correct_approach": "Return runnable code that defines the requested function.",
+            "failed_test": "ImportError: cannot import name 'hello'",
+        },
+        overlap_threshold=0.5,
+        existing_specs=[],
+        max_attempts=1,
+    )
+
+    assert spec is not None
+    assert spec.target_weakness.sub_tags == ["non_executable_code"]
+    assert any("runnable code" in item.lower() or "executable code" in item.lower() for item in spec.problem_spec.must_cover)
 
 
 def test_synthesize_emits_fine_grained_progress_per_slot(tmp_path: Path) -> None:
@@ -1651,6 +1943,87 @@ def test_synthesize_normalizes_real_model_style_output(
     assert specs[0].language_constraint.target_languages == ["python"]
 
 
+def test_regeneration_diversity_scope_ignores_other_weakness_specs() -> None:
+    from codemint.synthesize.pipeline import _generate_with_regeneration
+
+    weakness = WeaknessEntry(
+        rank=2,
+        fault_type="modeling",
+        sub_tags=["logic_error"],
+        frequency=1,
+        sample_task_ids=[233],
+        trainability=0.9,
+        collective_diagnosis=CollectiveDiagnosis(
+            refined_root_cause="Returning a nested dictionary instead of a flat list.",
+            capability_cliff="Flat-list harnesses reject structured tree outputs.",
+            misdiagnosed_ids=[],
+            misdiagnosis_corrections={},
+            cluster_coherence=0.95,
+        ),
+    )
+    existing = [
+        _existing_spec_with_weakness(
+            spec_id="spec-0001",
+            weakness_tag="missing_code_block",
+            theme="warehouses",
+            data_structure="array",
+            scale="small",
+        )
+    ]
+
+    spec = _generate_with_regeneration(
+        weakness,
+        diversity_tags=DiversityTags(
+            narrative_theme="warehouses",
+            data_structure="array",
+            constraint_scale="small",
+        ),
+        spec_index=2,
+        difficulty="medium",
+        invoke_model=lambda payload: {
+            "algorithm_type": "simulation",
+            "difficulty": "medium",
+            "narrative_theme": "warehouses",
+            "constraints": {
+                "n_range": [1, 100],
+                "value_range": [0, 1000],
+                "time_limit": "1s",
+                "memory_limit": "256MB",
+            },
+            "key_trap": "Return a flat list using `os.listdir(path)` instead of a nested tree dictionary.",
+            "must_cover": ["return a flat list of filenames"],
+            "must_avoid": ["nested dictionary output with children keys"],
+            "verification_spec": {
+                "min_test_cases": 4,
+                "must_include_edge_cases": ["directory contains gitkeep"],
+                "brute_force_verifiable": True,
+                "brute_force_complexity_limit": "O(n^2)",
+            },
+            "generation_hints": {
+                "solution_approach": "Use os.listdir(path) directly.",
+                "common_wrong_approach": "Build a recursive tree dictionary.",
+                "distinguishing_test": "assert 'gitkeep' in data",
+            },
+            "language_constraint": {
+                "target_languages": ["python"],
+                "language_specific": False,
+            },
+        },
+        feasibility_check=None,
+        original_evidence={
+            "wrong_line": "tree = {\"name\": name, \"type\": \"directory\", \"children\": []}",
+            "correct_approach": "Use `os.listdir(path)` to return a flat list of filenames.",
+            "failed_test": "assert 'gitkeep' in data",
+        },
+        overlap_threshold=0.5,
+        existing_specs=existing,
+        max_attempts=1,
+    )
+
+    assert spec.target_weakness.sub_tags == ["logic_error"]
+    assert spec.diversity_tags == existing[0].diversity_tags
+
+
 def _report() -> WeaknessReport:
     return WeaknessReport(
         weaknesses=[
@@ -1696,11 +2069,28 @@ def _diagnosis() -> DiagnosisRecord:
 
 
 def _existing_spec() -> SpecRecord:
-    return SpecRecord(
+    return _existing_spec_with_weakness(
         spec_id="existing-0001",
+        weakness_tag="state_tracking",
+        theme="warehouses",
+        data_structure="array",
+        scale="medium",
+    )
+
+
+def _existing_spec_with_weakness(
+    *,
+    spec_id: str,
+    weakness_tag: str,
+    theme: str,
+    data_structure: str,
+    scale: str,
+) -> SpecRecord:
+    return SpecRecord(
+        spec_id=spec_id,
         target_weakness=TargetWeakness(
             fault_type="modeling",
-            sub_tags=["state_tracking"],
+            sub_tags=[weakness_tag],
             root_cause="Existing root cause",
             capability_cliff="Existing cliff",
         ),
@@ -1725,9 +2115,9 @@ def _existing_spec() -> SpecRecord:
             brute_force_complexity_limit="O(n^2)",
         ),
         diversity_tags=DiversityTags(
-            narrative_theme="warehouses",
-            data_structure="array",
-            constraint_scale="medium",
+            narrative_theme=theme,
+            data_structure=data_structure,
+            constraint_scale=scale,
         ),
         generation_hints=GenerationHints(
             solution_approach="Track carry state",

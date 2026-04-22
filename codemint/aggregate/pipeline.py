@@ -37,6 +37,41 @@ from codemint.models.weakness import (
 from codemint.prompts.registry import load_prompt
 
 
+_ALLOWED_CANONICAL_WEAKNESSES = frozenset(
+    {
+        "function_name_mismatch",
+        "markdown_formatting",
+        "missing_code_block",
+        "syntax_error",
+        "logic_error",
+        "non_executable_code",
+    }
+)
+
+_CANONICAL_WEAKNESS_ALIASES = {
+    "public_entry_point_mismatch": "function_name_mismatch",
+    "entry_point_mismatch": "function_name_mismatch",
+    "function_name_non_compliance": "function_name_mismatch",
+    "function_signature_mismatch": "function_name_mismatch",
+    "wrong_function_name": "function_name_mismatch",
+    "markdown_code_fence": "markdown_formatting",
+    "code_fence_formatting": "markdown_formatting",
+    "raw_output_formatting_violation": "markdown_formatting",
+    "extraneous_characters": "markdown_formatting",
+    "missing_code": "missing_code_block",
+    "missing_output": "missing_code_block",
+    "no_code_provided": "missing_code_block",
+    "explanation_without_code": "missing_code_block",
+    "commentary_instead_of_code": "missing_code_block",
+    "missing_colon": "syntax_error",
+    "off_by_one": "logic_error",
+    "index_bounds": "logic_error",
+    "indexing": "logic_error",
+    "loop_bound": "logic_error",
+    "boundary_error": "logic_error",
+}
+
+
 def run_aggregate(
     diagnoses: list[DiagnosisRecord],
     output_path: Path,
@@ -70,6 +105,7 @@ def run_aggregate(
             analyze=collective_analyze or _default_collective_analyzer(resolved_config),
         ),
     )
+    tag_mappings = _normalize_tag_mappings(tag_mappings)
     normalized = _apply_collective_adjustments(repaired, collective_clusters, tag_mappings)
     final_clusters = cluster_diagnoses(normalized)
     if progress_callback is not None:
@@ -96,7 +132,11 @@ def _build_report(
     causal_analyze: CausalAnalyzer | None,
 ) -> WeaknessReport:
     weaknesses: list[WeaknessEntry] = []
-    collective_by_key = {cluster.key: cluster.collective_diagnosis for cluster in collective_clusters}
+    collective_by_key = {
+        (cluster.fault_type, _canonicalize_sub_tag(cluster.sub_tags[0] if cluster.sub_tags else "unknown")):
+        cluster.collective_diagnosis
+        for cluster in collective_clusters
+    }
     for index, cluster in enumerate(clusters, start=1):
         weaknesses.append(
             WeaknessEntry(
@@ -169,7 +209,7 @@ def _build_reclassifications(
                 continue
             if not _is_valid_fault_type(parsed[0]):
                 continue
-            reclassifications[task_id] = parsed
+            reclassifications[task_id] = (parsed[0], _canonicalize_sub_tag(parsed[1]))
     return reclassifications
 
 
@@ -211,10 +251,25 @@ def _is_valid_fault_type(value: str) -> bool:
 def _normalize_sub_tags(sub_tags: list[str], tag_mappings: dict[str, str]) -> list[str]:
     normalized: list[str] = []
     for tag in sub_tags:
-        mapped = tag_mappings.get(tag, tag)
+        mapped = _canonicalize_sub_tag(tag_mappings.get(tag, tag))
         if mapped not in normalized:
             normalized.append(mapped)
     return normalized or ["unknown"]
+
+
+def _normalize_tag_mappings(tag_mappings: dict[str, str]) -> dict[str, str]:
+    normalized: dict[str, str] = {}
+    for source_tag, target_tag in tag_mappings.items():
+        normalized[source_tag] = _canonicalize_sub_tag(target_tag)
+    return normalized
+
+
+def _canonicalize_sub_tag(tag: str) -> str:
+    normalized = tag.strip()
+    canonical = _CANONICAL_WEAKNESS_ALIASES.get(normalized, normalized)
+    if canonical in _ALLOWED_CANONICAL_WEAKNESSES:
+        return canonical
+    return "logic_error"
 
 
 def _default_collective_diagnosis(cluster) -> CollectiveDiagnosis:

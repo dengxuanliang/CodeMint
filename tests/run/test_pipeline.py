@@ -170,7 +170,7 @@ def test_run_pipeline_emits_progress_events_for_started_skipped_and_completed_st
     assert events[2]["status"] == "completed"
     assert events[2]["processed"] == 2
     assert events[4]["status"] == "completed"
-    assert events[4]["total"] == 1
+    assert events[4]["total"] == 5
 
 
 def test_run_pipeline_uses_spec_slot_total_for_synthesize_progress(tmp_path: Path) -> None:
@@ -193,10 +193,10 @@ def test_run_pipeline_uses_spec_slot_total_for_synthesize_progress(tmp_path: Pat
     )
 
     synthesize_events = [event for event in events if event["stage"] == "synthesize"]
-    assert synthesize_events[0]["total"] == 1
+    assert synthesize_events[0]["total"] == 5
     assert synthesize_events[-1]["status"] == "completed"
     assert synthesize_events[-1]["processed"] == 2
-    assert synthesize_events[-1]["total"] == 2
+    assert synthesize_events[-1]["total"] == 5
 
 
 def test_run_pipeline_passes_config_to_default_diagnose_stage(monkeypatch, tmp_path: Path) -> None:
@@ -488,7 +488,88 @@ def test_run_reruns_incomplete_downstream_artifacts_even_when_diagnose_is_comple
     assert synthesize_calls == [[1]]
 
 
+def test_run_start_from_synthesize_passes_existing_diagnoses_to_synthesize(tmp_path: Path) -> None:
+    input_path = tmp_path / "tasks.jsonl"
+    input_path.write_text(_task(234, "Wrong function name") + "\n", encoding="utf-8")
+    output_root = tmp_path / "artifacts"
+    run_dir = output_root / "demo-run"
+    run_dir.mkdir(parents=True)
+    append_jsonl(
+        run_dir / "diagnoses.jsonl",
+        [_diagnosis(234, source="model_deep").model_dump(mode="json")],
+    )
+    (run_dir / "weaknesses.json").write_text(_report().model_dump_json(), encoding="utf-8")
+    captured: dict[str, object] = {}
+
+    def fake_synthesize(report, output_path, **kwargs):
+        captured["diagnoses"] = kwargs["diagnoses"]
+        return _record_synthesize([], report, output_path)
+
+    run_pipeline(
+        input_paths=[input_path],
+        output_root=output_root,
+        run_id="demo-run",
+        start_from="synthesize",
+        run_synthesize_stage=fake_synthesize,
+    )
+
+    diagnoses = captured["diagnoses"]
+    assert [diagnosis.task_id for diagnosis in diagnoses] == [234]
+
+
+def test_run_default_diagnose_stage_writes_each_row_and_emits_running_progress(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from codemint.run import pipeline as run_pipeline_module
+
+    input_path = tmp_path / "tasks.jsonl"
+    input_path.write_text(
+        "\n".join(
+            [
+                _task(1, "Wrong answer on hidden case"),
+                _task(2, "Program returns the wrong total for some inputs."),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    output_root = tmp_path / "artifacts"
+    events: list[dict] = []
+    observed_line_counts: list[int] = []
+
+    def fake_diagnose_task(task, engine, confirmer, deep):
+        diagnoses_path = output_root / "demo-run" / "diagnoses.jsonl"
+        observed_line_counts.append(
+            len(diagnoses_path.read_text(encoding="utf-8").splitlines())
+            if diagnoses_path.exists()
+            else 0
+        )
+        return _diagnosis(task.task_id, source="model_deep")
+
+    monkeypatch.setattr("codemint.diagnose.item_mode._diagnose_task", fake_diagnose_task)
+
+    run_pipeline_module.run_pipeline(
+        input_paths=[input_path],
+        output_root=output_root,
+        run_id="demo-run",
+        progress_callback=events.append,
+        run_aggregate_stage=lambda diagnoses, output_path: _record_aggregate([], diagnoses, output_path),
+        run_synthesize_stage=lambda report, output_path: _record_synthesize([], report, output_path),
+    )
+
+    diagnoses_path = output_root / "demo-run" / "diagnoses.jsonl"
+    assert [row["task_id"] for row in read_jsonl(diagnoses_path)] == [1, 2]
+    assert observed_line_counts == [0, 1]
+    assert any(
+        event["stage"] == "diagnose" and event["status"] == "running" and event["processed"] == 1
+        for event in events
+    )
+
+
 def test_run_cli_from_override_wires_stage_control_and_rich_dry_run(tmp_path: Path) -> None:
+    from codemint import cli as cli_module
+
     input_path = tmp_path / "tasks.jsonl"
     input_path.write_text(
         "\n".join(
@@ -521,19 +602,38 @@ def test_run_cli_from_override_wires_stage_control_and_rich_dry_run(tmp_path: Pa
     assert "aggregate: 1 call" in dry_run_result.stdout
     assert "synthesize: 2 calls" in dry_run_result.stdout
 
-    from_result = runner.invoke(
-        app,
-        [
-            "run",
-            str(input_path),
-            "--output-root",
-            str(output_root),
-            "--run-id",
-            "demo-run",
-            "--from",
-            "aggregate",
-        ],
-    )
+    original_run_pipeline = cli_module.run_pipeline
+
+    def fake_run_pipeline(*, input_paths, output_root, run_id, start_from, config, progress_callback):
+        return run_pipeline(
+            input_paths=input_paths,
+            output_root=output_root,
+            run_id=run_id,
+            start_from=start_from,
+            config=config,
+            progress_callback=progress_callback,
+            run_diagnose_stage=lambda tasks, output_path: _record_diagnose([], tasks, output_path),
+            run_aggregate_stage=lambda diagnoses, output_path: _record_aggregate([], diagnoses, output_path),
+            run_synthesize_stage=lambda report, output_path: _record_synthesize([], report, output_path),
+        )
+
+    cli_module.run_pipeline = fake_run_pipeline
+    try:
+        from_result = runner.invoke(
+            app,
+            [
+                "run",
+                str(input_path),
+                "--output-root",
+                str(output_root),
+                "--run-id",
+                "demo-run",
+                "--from",
+                "aggregate",
+            ],
+        )
+    finally:
+        cli_module.run_pipeline = original_run_pipeline
 
     assert from_result.exit_code == 0, from_result.stdout
     assert "stages=aggregate,synthesize" in from_result.stdout

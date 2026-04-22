@@ -19,6 +19,7 @@ def run_diagnose(
     config: CodeMintConfig | None = None,
     confirm_analyzer: ConfirmAnalyzer | None = None,
     deep_analyzer: DeepAnalyzer | None = None,
+    progress_callback=None,
 ) -> list[DiagnosisRecord]:
     resolved_config = config or CodeMintConfig()
     return run_item_mode(
@@ -28,4 +29,5 @@ def run_diagnose(
         config=resolved_config,
         confirm_analyzer=confirm_analyzer,
         deep_analyzer=deep_analyzer,
+        progress_callback=progress_callback,
     )
