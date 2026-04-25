@@ -563,7 +563,9 @@ def test_synthesize_uses_function_name_mismatch_fallback_when_generation_fails(t
     assert len(specs) == 1
     spec = specs[0]
     assert spec.target_weakness.sub_tags == ["function_name_mismatch"]
-    assert any("exact callable entry point" in item.lower() for item in spec.problem_spec.must_cover)
+    assert spec.problem_spec.must_cover == [
+        "Require an exact public function named solve.",
+    ]
     assert any("alternate public function names" in item.lower() for item in spec.problem_spec.must_avoid)
 
 
@@ -1251,6 +1253,138 @@ def test_generate_with_regeneration_includes_structured_repair_mode_for_contract
     assert "exact public entry-point" in seen_payloads[1]["repair_context"]["reason"]
 
 
+def test_generate_with_regeneration_deduplicates_must_avoid_constraints_across_retries() -> None:
+    from codemint.synthesize.feasibility import FeasibilityResult
+    from codemint.synthesize.pipeline import _generate_with_regeneration
+
+    weakness = WeaknessEntry(
+        rank=1,
+        fault_type="implementation",
+        sub_tags=["logic_error"],
+        frequency=1,
+        sample_task_ids=[301],
+        trainability=0.6,
+        collective_diagnosis=CollectiveDiagnosis(
+            refined_root_cause="The executable code returns the wrong result.",
+            capability_cliff="The solver computes the wrong structure under a valid interface.",
+            misdiagnosed_ids=[],
+            misdiagnosis_corrections={},
+            cluster_coherence=0.91,
+        ),
+    )
+    existing_spec = SpecRecord(
+        spec_id="spec-0001",
+        target_weakness={
+            "fault_type": "implementation",
+            "sub_tags": ["logic_error"],
+            "root_cause": "logic_error",
+            "capability_cliff": "Model computes the wrong result with executable logic.",
+        },
+        problem_spec={
+            "algorithm_type": "placeholder",
+            "difficulty": "medium",
+            "narrative_theme": "warehouses",
+            "constraints": {
+                "n_range": [1, 10],
+                "value_range": [0, 10],
+                "time_limit": "1s",
+                "memory_limit": "64MB",
+            },
+            "key_trap": "placeholder",
+            "must_cover": [],
+            "must_avoid": [],
+        },
+        verification_spec={
+            "min_test_cases": 1,
+            "must_include_edge_cases": [],
+            "brute_force_verifiable": True,
+            "brute_force_complexity_limit": "O(1)",
+        },
+        diversity_tags={
+            "narrative_theme": "ports",
+            "data_structure": "graph",
+            "constraint_scale": "large",
+        },
+        generation_hints={
+            "solution_approach": "placeholder",
+            "common_wrong_approach": "placeholder",
+            "distinguishing_test": "placeholder",
+        },
+        language_constraint={
+            "target_languages": ["python"],
+            "language_specific": False,
+        },
+        prompt_version="v1",
+    )
+    seen_payloads: list[dict] = []
+
+    def invoke_model(payload: dict) -> dict:
+        seen_payloads.append(payload)
+        return {
+            "algorithm_type": "simulation",
+            "difficulty": "medium",
+            "narrative_theme": "warehouses",
+            "constraints": {
+                "n_range": [1, 100],
+                "value_range": [0, 1000],
+                "time_limit": "1s",
+                "memory_limit": "256MB",
+            },
+            "key_trap": "The trap reproduces `return x - 1` from the original evidence.",
+            "must_cover": ["exact output semantics"],
+            "must_avoid": ["avoid duplicates of spec-0001"],
+            "verification_spec": {
+                "min_test_cases": 4,
+                "must_include_edge_cases": ["single value input"],
+                "brute_force_verifiable": True,
+                "brute_force_complexity_limit": "O(n^2)",
+            },
+            "generation_hints": {
+                "solution_approach": "Return the exact requested value.",
+                "common_wrong_approach": "Return a wrapped or transformed result.",
+                "distinguishing_test": "Check the exact top-level output shape.",
+            },
+            "language_constraint": {
+                "target_languages": ["python"],
+                "language_specific": False,
+            },
+        }
+
+    feasibility_calls = {"count": 0}
+
+    def feasibility_check(payload: dict) -> FeasibilityResult:
+        feasibility_calls["count"] += 1
+        if feasibility_calls["count"] == 1:
+            return FeasibilityResult(accepted=False, reason="Need stronger exact output semantics.")
+        return FeasibilityResult(accepted=True, reason="ok")
+
+    spec = _generate_with_regeneration(
+        weakness,
+        diversity_tags=DiversityTags(
+            narrative_theme="warehouses",
+            data_structure="array",
+            constraint_scale="small",
+        ),
+        spec_index=2,
+        difficulty="medium",
+        invoke_model=invoke_model,
+        feasibility_check=feasibility_check,
+        original_evidence={
+            "wrong_line": "return x - 1",
+            "correct_approach": "Return the exact requested integer result.",
+            "failed_test": "assert solve(2) == 4",
+        },
+        overlap_threshold=0.5,
+        existing_specs=[existing_spec],
+        max_attempts=2,
+    )
+
+    assert spec is not None
+    assert len(seen_payloads) == 2
+    assert seen_payloads[1]["must_avoid_constraints"].count("avoid duplicates of spec-0001") == 1
+    assert "avoid duplicates of spec-0001" not in spec.problem_spec.must_avoid
+
+
 def test_generate_with_regeneration_includes_missing_contracts_in_retry_payload() -> None:
     from codemint.synthesize.feasibility import FeasibilityResult
     from codemint.synthesize.pipeline import _generate_with_regeneration
@@ -1346,6 +1480,101 @@ def test_generate_with_regeneration_includes_missing_contracts_in_retry_payload(
         "requires_exact_public_entry_point",
         "forbids_alternate_public_names",
     ]
+
+
+def test_generate_with_regeneration_does_not_leak_process_constraints_into_final_spec() -> None:
+    from codemint.synthesize.feasibility import FeasibilityResult
+    from codemint.synthesize.pipeline import _generate_with_regeneration
+
+    weakness = WeaknessEntry(
+        rank=1,
+        fault_type="implementation",
+        sub_tags=["function_name_mismatch"],
+        frequency=1,
+        sample_task_ids=[201],
+        trainability=0.6,
+        collective_diagnosis=CollectiveDiagnosis(
+            refined_root_cause="Function name mismatches break execution.",
+            capability_cliff="Strict harnesses require the exact public entry point.",
+            misdiagnosed_ids=[],
+            misdiagnosis_corrections={},
+            cluster_coherence=0.94,
+        ),
+    )
+
+    feasibility_calls = {"count": 0}
+
+    def invoke_model(payload: dict) -> dict:
+        return {
+            "algorithm_type": "simulation",
+            "difficulty": "medium",
+            "narrative_theme": "warehouses",
+            "constraints": {
+                "n_range": [1, 100],
+                "value_range": [0, 1000],
+                "time_limit": "1s",
+                "memory_limit": "256MB",
+            },
+            "key_trap": "The trap fails when `solve_value` is exposed instead of the required `solve` entry point.",
+            "must_cover": ["exact callable entry point solve(x)"],
+            "must_avoid": [
+                "alternate public function names",
+                "avoid duplicates of spec-0001",
+                "repair feasibility issue: require exact public entry-point",
+            ],
+            "verification_spec": {
+                "min_test_cases": 4,
+                "must_include_edge_cases": ["single value input"],
+                "brute_force_verifiable": True,
+                "brute_force_complexity_limit": "O(n^2)",
+            },
+            "generation_hints": {
+                "solution_approach": "Implement the exact solve(x) entry point.",
+                "common_wrong_approach": "Expose solve_value(x) instead of solve(x).",
+                "distinguishing_test": "Call solve() directly from the harness.",
+            },
+            "language_constraint": {
+                "target_languages": ["python"],
+                "language_specific": False,
+            },
+        }
+
+    def feasibility_check(payload: dict) -> FeasibilityResult:
+        feasibility_calls["count"] += 1
+        if feasibility_calls["count"] == 1:
+            return FeasibilityResult(
+                accepted=False,
+                reason="Function-name mismatch weakness spec must require a single exact public entry-point contract and forbid alternate public function names.",
+                missing_contracts=[
+                    "requires_exact_public_entry_point",
+                    "forbids_alternate_public_names",
+                ],
+            )
+        return FeasibilityResult(accepted=True, reason="ok")
+
+    spec = _generate_with_regeneration(
+        weakness,
+        diversity_tags=DiversityTags(
+            narrative_theme="warehouses",
+            data_structure="array",
+            constraint_scale="small",
+        ),
+        spec_index=1,
+        difficulty="medium",
+        invoke_model=invoke_model,
+        feasibility_check=feasibility_check,
+        original_evidence={
+            "wrong_line": "def solve_value(x):",
+            "correct_approach": "Define the exact solve(x) entry point expected by the harness.",
+            "failed_test": "NameError: name 'solve' is not defined",
+        },
+        overlap_threshold=0.5,
+        existing_specs=[],
+        max_attempts=2,
+    )
+
+    assert all("avoid duplicates of" not in item for item in spec.problem_spec.must_avoid)
+    assert all("repair feasibility issue:" not in item for item in spec.problem_spec.must_avoid)
 
 
 def test_generate_with_regeneration_includes_structured_repair_mode_for_raw_output_and_diversity() -> None:
@@ -1719,7 +1948,10 @@ def test_generate_or_log_failure_uses_builtin_fallback_for_missing_code_block(tm
 
     assert spec is not None
     assert spec.target_weakness.sub_tags == ["missing_code_block"]
-    assert any("executable code" in item.lower() for item in spec.problem_spec.must_cover)
+    assert spec.problem_spec.must_cover == [
+        "Require executable code output.",
+        "Require exactly one callable solution entry point named solve.",
+    ]
     errors = read_jsonl(tmp_path / "errors.jsonl")
     assert errors[-1]["event_type"] == "fallback_used"
     assert errors[-1]["weakness"] == "missing_code_block"
@@ -1815,8 +2047,10 @@ def test_missing_code_block_fallback_uses_non_python_language_wording(tmp_path: 
     assert spec is not None
     assert spec.language_constraint.target_languages == ["java"]
     assert spec.language_constraint.language_specific is True
-    assert "java code" in spec.problem_spec.must_cover[0].lower()
-    assert "method" in spec.problem_spec.must_cover[0].lower()
+    assert spec.problem_spec.must_cover == [
+        "Require executable Java code output.",
+        "Require exactly one callable solution method named solve.",
+    ]
     assert spec.generation_hints.solution_approach == "Return the requested `solve` method directly as executable Java code."
 
 

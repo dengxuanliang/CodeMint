@@ -223,7 +223,9 @@ def _generate_with_regeneration(
     existing_specs: list[SpecRecord],
     max_attempts: int,
 ) -> SpecRecord:
-    must_avoid_constraints = [f"avoid duplicates of {spec.spec_id}" for spec in existing_specs]
+    must_avoid_constraints = _dedupe_constraints(
+        [f"avoid duplicates of {spec.spec_id}" for spec in existing_specs]
+    )
     repair_context: dict[str, str] = {"mode": "initial_generation", "reason": ""}
 
     for _ in range(max_attempts):
@@ -254,14 +256,18 @@ def _generate_with_regeneration(
                 "mode": _repair_mode_for_diversity_reason(diversity_result.reason),
                 "reason": diversity_result.reason,
             }
-            must_avoid_constraints.append(f"repair diversity issue: {diversity_result.reason}")
+            must_avoid_constraints = _dedupe_constraints(
+                must_avoid_constraints + [f"repair diversity issue: {diversity_result.reason}"]
+            )
         if not feasibility_result.accepted:
             repair_context = {
                 "mode": _repair_mode_for_feasibility_reason(feasibility_result.reason),
                 "reason": feasibility_result.reason,
                 "missing_contracts": list(feasibility_result.missing_contracts),
             }
-            must_avoid_constraints.append(f"repair feasibility issue: {feasibility_result.reason}")
+            must_avoid_constraints = _dedupe_constraints(
+                must_avoid_constraints + [f"repair feasibility issue: {feasibility_result.reason}"]
+            )
 
     raise ValueError(f"Failed to synthesize a feasible spec for weakness {weakness_key(weakness)}")
 
@@ -520,6 +526,18 @@ def _fallback_language_profile(original_evidence: dict[str, str]) -> dict[str, o
         "target_languages": list(profile.target_languages),
         "language_specific": profile.language_specific,
     }
+
+
+def _dedupe_constraints(items: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        normalized = item.strip().lower()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(item)
+    return deduped
 
 
 def _executable_code_noun(language: str) -> str:

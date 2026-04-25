@@ -20,6 +20,12 @@ from codemint.models.spec import (
 )
 from codemint.models.weakness import WeaknessEntry
 from codemint.prompts.registry import load_prompt
+from codemint.synthesize.contract_normalizer import (
+    describe_public_contract_target,
+    describe_wrong_public_contract_target,
+    normalize_contracts,
+    resolve_function_name_mismatch_target,
+)
 from codemint.synthesize.input_view import build_synthesis_input_view
 
 
@@ -77,9 +83,42 @@ def generate_spec(
     )
     assigned_difficulty = difficulty or response.difficulty
     key_trap = _require_evidence_grounding(response.key_trap, original_evidence)
-    must_cover = _augment_must_cover(weakness, response.must_cover)
-    must_avoid = _augment_must_avoid(weakness, response.must_avoid)
+    must_cover = _dedupe_strings(_augment_must_cover(weakness, response.must_cover))
+    must_avoid = _dedupe_strings(_augment_must_avoid(weakness, response.must_avoid))
+    final_must_avoid = _dedupe_strings(must_avoid + list(must_avoid_constraints or []))
     _validate_function_name_grounding(weakness, key_trap, must_cover, must_avoid, response.generation_hints, original_evidence)
+    normalized_cover, normalized_avoid = normalize_contracts(
+        weakness,
+        must_cover=must_cover,
+        must_avoid=final_must_avoid,
+        target_languages=response_language_constraint.target_languages,
+        context_texts=[
+            key_trap,
+            response.generation_hints.solution_approach,
+            response.generation_hints.common_wrong_approach,
+            response.generation_hints.distinguishing_test,
+        ],
+        original_evidence=original_evidence,
+    )
+    final_key_trap = key_trap
+    final_generation_hints = response.generation_hints
+    if "function_name_mismatch" in weakness.sub_tags:
+        target = resolve_function_name_mismatch_target(
+            must_cover=must_cover,
+            context_texts=[
+                key_trap,
+                response.generation_hints.solution_approach,
+                response.generation_hints.common_wrong_approach,
+                response.generation_hints.distinguishing_test,
+            ],
+            original_evidence=original_evidence,
+        )
+        final_key_trap, final_generation_hints = _rewrite_function_name_mismatch_narrative(
+            key_trap=key_trap,
+            generation_hints=response.generation_hints,
+            target_description=describe_public_contract_target(target),
+            wrong_description=describe_wrong_public_contract_target(original_evidence),
+        )
 
     return SpecRecord(
         spec_id=f"spec-{spec_index:04d}",
@@ -94,13 +133,13 @@ def generate_spec(
             difficulty=assigned_difficulty,
             narrative_theme=diversity_tags.narrative_theme,
             constraints=response.constraints,
-            key_trap=key_trap,
-            must_cover=must_cover,
-            must_avoid=must_avoid + list(must_avoid_constraints or []),
+            key_trap=final_key_trap,
+            must_cover=normalized_cover,
+            must_avoid=normalized_avoid,
         ),
         verification_spec=response.verification_spec,
         diversity_tags=diversity_tags,
-        generation_hints=response.generation_hints,
+        generation_hints=final_generation_hints,
         language_constraint=response_language_constraint,
         prompt_version=prompt.version,
     )
@@ -357,10 +396,16 @@ def _augment_must_cover(weakness: WeaknessEntry, must_cover: list[str]) -> list[
         )
     if "missing_code_block" in weakness.sub_tags:
         target_entrypoint = _target_entrypoint_from_evidence(weakness, augmented)
-        _append_if_missing(
-            augmented,
-            f"Require executable code output with the requested callable entry point {target_entrypoint}, not prose or explanation.",
-        )
+        if _is_generic_entrypoint_placeholder(target_entrypoint):
+            _append_if_missing(
+                augmented,
+                "Require executable code output with the requested callable entry point, not prose or explanation.",
+            )
+        else:
+            _append_if_missing(
+                augmented,
+                f"Require executable code output with the requested callable entry point {target_entrypoint}, not prose or explanation.",
+            )
     if "markdown_formatting" in weakness.sub_tags:
         _append_if_missing(
             augmented,
@@ -368,10 +413,16 @@ def _augment_must_cover(weakness: WeaknessEntry, must_cover: list[str]) -> list[
         )
     if "syntax_error" in weakness.sub_tags:
         target_entrypoint = _target_entrypoint_from_evidence(weakness, augmented)
-        _append_if_missing(
-            augmented,
-            f"Require syntactically complete executable code with a valid {target_entrypoint} definition.",
-        )
+        if _is_generic_entrypoint_placeholder(target_entrypoint):
+            _append_if_missing(
+                augmented,
+                "Require syntactically complete executable code with a valid callable entry point definition.",
+            )
+        else:
+            _append_if_missing(
+                augmented,
+                f"Require syntactically complete executable code with a valid {target_entrypoint} definition.",
+            )
     if "non_executable_code" in weakness.sub_tags:
         _append_if_missing(
             augmented,
@@ -416,6 +467,18 @@ def _append_if_missing(items: list[str], candidate: str) -> None:
         items.append(candidate)
 
 
+def _dedupe_strings(items: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+    for item in items:
+        normalized = item.strip().lower()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(item)
+    return deduped
+
+
 def _target_entrypoint_from_evidence(weakness: WeaknessEntry, existing_cover: list[str]) -> str:
     text = " ".join(
         [
@@ -428,6 +491,10 @@ def _target_entrypoint_from_evidence(weakness: WeaknessEntry, existing_cover: li
     if identifiers:
         return identifiers[-1]
     return "the requested entry point from the test harness"
+
+
+def _is_generic_entrypoint_placeholder(name: str) -> bool:
+    return name.strip().lower() == "the requested entry point from the test harness"
 
 
 def _validate_function_name_grounding(
@@ -460,6 +527,24 @@ def _validate_function_name_grounding(
     )
     if ungrounded:
         raise ValueError(f"Generated spec contains ungrounded function name(s): {ungrounded}")
+
+
+def _rewrite_function_name_mismatch_narrative(
+    *,
+    key_trap: str,
+    generation_hints: GenerationHints,
+    target_description: str,
+    wrong_description: str,
+) -> tuple[str, GenerationHints]:
+    final_key_trap = (
+        f"{key_trap.strip()} The task must enforce {target_description} and reject {wrong_description}."
+    ).strip()
+    final_hints = GenerationHints(
+        solution_approach=f"Implement {target_description}.",
+        common_wrong_approach=f"Expose a different public function name or public output shape than {target_description}.",
+        distinguishing_test=f"Call only {target_description} and reject alternate public names or output shapes.",
+    )
+    return final_key_trap, final_hints
 
 
 def _function_names_in_text(text: str) -> list[str]:

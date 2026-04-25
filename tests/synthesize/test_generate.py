@@ -426,8 +426,12 @@ def test_function_name_mismatch_spec_requires_exact_entry_point_contract() -> No
         spec_index=1,
     )
 
-    assert any("exact callable entry point" in item for item in spec.problem_spec.must_cover)
-    assert any("alternative public function names" in item for item in spec.problem_spec.must_avoid)
+    assert spec.problem_spec.must_cover == [
+        "Require an exact public function named solve.",
+    ]
+    assert spec.problem_spec.must_avoid == [
+        "Do not expose alternate public function names.",
+    ]
 
 
 def test_missing_code_block_spec_gets_explicit_code_output_constraints() -> None:
@@ -494,8 +498,13 @@ def test_missing_code_block_spec_gets_explicit_code_output_constraints() -> None
         spec_index=1,
     )
 
-    assert any("executable code" in item for item in spec.problem_spec.must_cover)
-    assert any("explanation" in item for item in spec.problem_spec.must_avoid)
+    assert spec.problem_spec.must_cover == [
+        "Require executable code output.",
+        "Require exactly one callable solution entry point.",
+    ]
+    assert spec.problem_spec.must_avoid == [
+        "Do not return explanation-only or prose-only output.",
+    ]
 
 
 def test_markdown_formatting_spec_gets_raw_output_constraints() -> None:
@@ -562,8 +571,12 @@ def test_markdown_formatting_spec_gets_raw_output_constraints() -> None:
         spec_index=1,
     )
 
-    assert any("raw executable code" in item for item in spec.problem_spec.must_cover)
-    assert any("fenced code blocks" in item for item in spec.problem_spec.must_avoid)
+    assert spec.problem_spec.must_cover == [
+        "Require raw executable code output.",
+    ]
+    assert spec.problem_spec.must_avoid == [
+        "Do not wrap the final answer in markdown fences, backticks, or fenced code blocks.",
+    ]
 
 
 def test_syntax_error_spec_gets_syntactic_completeness_constraints() -> None:
@@ -630,8 +643,13 @@ def test_syntax_error_spec_gets_syntactic_completeness_constraints() -> None:
         spec_index=1,
     )
 
-    assert any("syntactically complete executable code" in item for item in spec.problem_spec.must_cover)
-    assert any("missing colons" in item or "missing bodies" in item for item in spec.problem_spec.must_avoid)
+    assert spec.problem_spec.must_cover == [
+        "Require syntactically complete executable code.",
+        "Require a valid callable definition for solve.",
+    ]
+    assert spec.problem_spec.must_avoid == [
+        "Do not emit incomplete or malformed code such as missing colons, missing bodies, or malformed function headers.",
+    ]
 
 
 def test_function_name_mismatch_constraints_use_evidence_entrypoint_not_solve() -> None:
@@ -700,6 +718,84 @@ def test_function_name_mismatch_constraints_use_evidence_entrypoint_not_solve() 
     cover_text = " ".join(spec.problem_spec.must_cover)
     assert "get_column_quantiles" in cover_text
     assert "solve(x)" not in cover_text
+    assert "requested entry point from the test harness" not in cover_text
+
+
+def test_function_name_mismatch_contracts_are_normalized_for_downstream_consumption() -> None:
+    from codemint.synthesize.generate import generate_spec
+
+    weakness = WeaknessEntry(
+        rank=1,
+        fault_type="implementation",
+        sub_tags=["function_name_mismatch"],
+        frequency=1,
+        sample_task_ids=[234],
+        trainability=0.6,
+        collective_diagnosis=CollectiveDiagnosis(
+            refined_root_cause="Function entry point name mismatch.",
+            capability_cliff="Harness cannot call the generated function.",
+            misdiagnosed_ids=[],
+            misdiagnosis_corrections={},
+            cluster_coherence=0.95,
+        ),
+    )
+
+    spec = generate_spec(
+        weakness,
+        diversity_tags=DiversityTags(
+            narrative_theme="warehouses",
+            data_structure="array",
+            constraint_scale="small",
+        ),
+        invoke_model=lambda prompt: {
+            "algorithm_type": "simulation",
+            "difficulty": "medium",
+            "narrative_theme": "warehouses",
+            "constraints": {
+                "n_range": [1, 100],
+                "value_range": [0, 1000],
+                "time_limit": "1s",
+                "memory_limit": "256MB",
+            },
+            "key_trap": "The trap repeats the original wrong callable `compute_quantiles` instead of `get_column_quantiles`.",
+            "must_cover": [
+                "single exact public function contract",
+                "exact callable entry point get_column_quantiles(csv_path, quantiles)",
+            ],
+            "must_avoid": [
+                "alternate public function names",
+                "renaming the public entry point to compute_quantiles",
+            ],
+            "verification_spec": {
+                "min_test_cases": 4,
+                "must_include_edge_cases": ["single csv file"],
+                "brute_force_verifiable": True,
+                "brute_force_complexity_limit": "O(n^2)",
+            },
+            "generation_hints": {
+                "solution_approach": "Expose get_column_quantiles.",
+                "common_wrong_approach": "Expose compute_quantiles.",
+                "distinguishing_test": "Call get_column_quantiles directly.",
+            },
+            "language_constraint": {
+                "target_languages": ["python"],
+                "language_specific": False,
+            },
+        },
+        original_evidence={
+            "wrong_line": "def compute_quantiles(csv_path, quantiles):",
+            "correct_approach": "Define the exact get_column_quantiles(csv_path, quantiles) entry point expected by the harness.",
+            "failed_test": "NameError: name 'get_column_quantiles' is not defined",
+        },
+        spec_index=1,
+    )
+
+    assert spec.problem_spec.must_cover == [
+        "Require an exact public function named get_column_quantiles.",
+    ]
+    assert spec.problem_spec.must_avoid == [
+        "Do not expose alternate public function names.",
+    ]
 
 
 def test_generated_spec_rejects_new_function_names_not_grounded_in_evidence() -> None:
@@ -1095,7 +1191,507 @@ def test_missing_code_block_recovers_entrypoint_from_aggregate_diagnosis_when_co
         spec_index=1,
     )
 
-    assert any("get_column_quantiles" in item for item in spec.problem_spec.must_cover)
+    assert spec.problem_spec.must_cover == [
+        "Require executable code output.",
+        "Require exactly one callable solution entry point named get_column_quantiles.",
+    ]
+
+
+def test_missing_code_block_uses_clean_generic_entrypoint_wording_when_unknown() -> None:
+    from codemint.synthesize.generate import generate_spec
+
+    weakness = WeaknessEntry(
+        rank=1,
+        fault_type="implementation",
+        sub_tags=["missing_code_block"],
+        frequency=1,
+        sample_task_ids=[105],
+        trainability=0.6,
+        collective_diagnosis=CollectiveDiagnosis(
+            refined_root_cause="The answer returns explanation text instead of executable code.",
+            capability_cliff="The harness requires executable output.",
+            misdiagnosed_ids=[],
+            misdiagnosis_corrections={},
+            cluster_coherence=0.9,
+        ),
+    )
+
+    spec = generate_spec(
+        weakness,
+        diversity_tags=DiversityTags(
+            narrative_theme="warehouses",
+            data_structure="array",
+            constraint_scale="small",
+        ),
+        invoke_model=lambda payload: {
+            "algorithm_type": "simulation",
+            "difficulty": "medium",
+            "narrative_theme": "warehouses",
+            "constraints": {
+                "n_range": [1, 100],
+                "value_range": [0, 1000],
+                "time_limit": "1s",
+                "memory_limit": "256MB",
+            },
+            "key_trap": "The trap reproduces the original final code block is missing failure instead of executable output.",
+            "must_cover": ["basic implementation correctness"],
+            "must_avoid": ["verbatim reuse of prior tasks"],
+            "verification_spec": {
+                "min_test_cases": 4,
+                "must_include_edge_cases": ["single value input"],
+                "brute_force_verifiable": True,
+                "brute_force_complexity_limit": "O(n^2)",
+            },
+            "generation_hints": {
+                "solution_approach": "Return the executable implementation directly.",
+                "common_wrong_approach": "Explain the intended code without emitting it.",
+                "distinguishing_test": "Check that the required callable exists.",
+            },
+            "language_constraint": {
+                "target_languages": ["python"],
+                "language_specific": False,
+            },
+        },
+        original_evidence={
+            "wrong_line": "The answer explains the approach, but the final code block is missing.",
+            "correct_approach": "Return the requested executable implementation directly.",
+            "failed_test": "No callable implementation was available for execution.",
+        },
+        spec_index=1,
+    )
+
+    assert spec.problem_spec.must_cover == [
+        "Require executable code output.",
+        "Require exactly one callable solution entry point.",
+    ]
+    assert spec.problem_spec.must_avoid == [
+        "Do not return explanation-only or prose-only output.",
+    ]
+    assert not any("requested callable entry point the requested entry point" in item for item in spec.problem_spec.must_cover)
+
+
+def test_missing_code_block_does_not_extract_entrypoint_from_named_as_phrase() -> None:
+    from codemint.synthesize.generate import generate_spec
+
+    weakness = WeaknessEntry(
+        rank=1,
+        fault_type="implementation",
+        sub_tags=["missing_code_block"],
+        frequency=1,
+        sample_task_ids=[106],
+        trainability=0.6,
+        collective_diagnosis=CollectiveDiagnosis(
+            refined_root_cause="The answer returns explanation text instead of executable code.",
+            capability_cliff="The harness requires executable output.",
+            misdiagnosed_ids=[],
+            misdiagnosis_corrections={},
+            cluster_coherence=0.9,
+        ),
+    )
+
+    spec = generate_spec(
+        weakness,
+        diversity_tags=DiversityTags(
+            narrative_theme="warehouses",
+            data_structure="array",
+            constraint_scale="small",
+        ),
+        invoke_model=lambda payload: {
+            "algorithm_type": "simulation",
+            "difficulty": "medium",
+            "narrative_theme": "warehouses",
+            "constraints": {
+                "n_range": [1, 100],
+                "value_range": [0, 1000],
+                "time_limit": "1s",
+                "memory_limit": "256MB",
+            },
+            "key_trap": "The trap reproduces the original final code block is missing failure and the harness expects the required callable to be named as specified by the task statement.",
+            "must_cover": ["basic implementation correctness"],
+            "must_avoid": ["verbatim reuse of prior tasks"],
+            "verification_spec": {
+                "min_test_cases": 4,
+                "must_include_edge_cases": ["single value input"],
+                "brute_force_verifiable": True,
+                "brute_force_complexity_limit": "O(n^2)",
+            },
+            "generation_hints": {
+                "solution_approach": "Return executable code directly.",
+                "common_wrong_approach": "Explain the intended code without emitting it.",
+                "distinguishing_test": "Check that a callable implementation exists.",
+            },
+            "language_constraint": {
+                "target_languages": ["python"],
+                "language_specific": False,
+            },
+        },
+        original_evidence={
+            "wrong_line": "The answer explains the approach, but the final code block is missing.",
+            "correct_approach": "Return executable code directly.",
+            "failed_test": "No callable implementation was available for execution.",
+        },
+        spec_index=1,
+    )
+
+    assert spec.problem_spec.must_cover == [
+        "Require executable code output.",
+        "Require exactly one callable solution entry point.",
+    ]
+
+
+def test_function_name_mismatch_does_not_extract_entrypoint_from_the_phrase() -> None:
+    from codemint.synthesize.generate import generate_spec
+
+    weakness = WeaknessEntry(
+        rank=1,
+        fault_type="implementation",
+        sub_tags=["function_name_mismatch"],
+        frequency=1,
+        sample_task_ids=[235],
+        trainability=0.6,
+        collective_diagnosis=CollectiveDiagnosis(
+            refined_root_cause="Function entry point name mismatch.",
+            capability_cliff="Harness cannot call the generated function.",
+            misdiagnosed_ids=[],
+            misdiagnosis_corrections={},
+            cluster_coherence=0.95,
+        ),
+    )
+
+    spec = generate_spec(
+        weakness,
+        diversity_tags=DiversityTags(
+            narrative_theme="warehouses",
+            data_structure="array",
+            constraint_scale="small",
+        ),
+        invoke_model=lambda prompt: {
+            "algorithm_type": "simulation",
+            "difficulty": "medium",
+            "narrative_theme": "warehouses",
+            "constraints": {
+                "n_range": [1, 100],
+                "value_range": [0, 1000],
+                "time_limit": "1s",
+                "memory_limit": "256MB",
+            },
+            "key_trap": "The original evidence showed the wrong callable `compute_quantiles` while the harness expected the exact public entry point.",
+            "must_cover": ["single exact public function contract"],
+            "must_avoid": ["alternate public function names"],
+            "verification_spec": {
+                "min_test_cases": 4,
+                "must_include_edge_cases": ["single csv file"],
+                "brute_force_verifiable": True,
+                "brute_force_complexity_limit": "O(n^2)",
+            },
+            "generation_hints": {
+                "solution_approach": "Expose get_column_quantiles(csv_path, quantiles) as the exact public entry point expected by the harness.",
+                "common_wrong_approach": "Expose a differently named public callable.",
+                "distinguishing_test": "Call the exact expected function name directly.",
+            },
+            "language_constraint": {
+                "target_languages": ["python"],
+                "language_specific": False,
+            },
+        },
+        original_evidence={
+            "wrong_line": "def compute_quantiles(csv_path, quantiles):",
+            "correct_approach": "Define the exact get_column_quantiles(csv_path, quantiles) entry point expected by the harness.",
+            "failed_test": "NameError: name 'get_column_quantiles' is not defined",
+        },
+        spec_index=1,
+    )
+
+    assert spec.problem_spec.must_cover == [
+        "Require an exact public function named get_column_quantiles.",
+    ]
+
+
+def test_function_name_mismatch_prioritizes_expected_callable_over_wrong_line_callable() -> None:
+    from codemint.synthesize.generate import generate_spec
+
+    weakness = WeaknessEntry(
+        rank=1,
+        fault_type="implementation",
+        sub_tags=["function_name_mismatch"],
+        frequency=1,
+        sample_task_ids=[236],
+        trainability=0.6,
+        collective_diagnosis=CollectiveDiagnosis(
+            refined_root_cause="Function entry point name mismatch.",
+            capability_cliff="Harness cannot call the generated function.",
+            misdiagnosed_ids=[],
+            misdiagnosis_corrections={},
+            cluster_coherence=0.95,
+        ),
+    )
+
+    spec = generate_spec(
+        weakness,
+        diversity_tags=DiversityTags(
+            narrative_theme="warehouses",
+            data_structure="graph",
+            constraint_scale="medium",
+        ),
+        invoke_model=lambda prompt: {
+            "algorithm_type": "dynamic programming",
+            "difficulty": "hard",
+            "narrative_theme": "warehouses",
+            "constraints": {
+                "n_range": [1, 100],
+                "value_range": [0, 1000],
+                "time_limit": "1s",
+                "memory_limit": "256MB",
+            },
+            "key_trap": "Original evidence showed a public entrypoint mismatch: the model exposed `compute_quantiles(...)` while the checker called `get_column_quantiles(...)`, causing a NameError.",
+            "must_cover": ["single exact public function contract"],
+            "must_avoid": ["alternate public function names"],
+            "verification_spec": {
+                "min_test_cases": 4,
+                "must_include_edge_cases": ["single csv file"],
+                "brute_force_verifiable": True,
+                "brute_force_complexity_limit": "O(n^2)",
+            },
+            "generation_hints": {
+                "solution_approach": "Use dynamic programming but expose get_column_quantiles(csv_path, quantiles) as the only public callable.",
+                "common_wrong_approach": "Expose compute_quantiles(csv_path, quantiles) instead of the expected callable.",
+                "distinguishing_test": "Checker imports and calls only get_column_quantiles(csv_path, quantiles).",
+            },
+            "language_constraint": {
+                "target_languages": ["python"],
+                "language_specific": False,
+            },
+        },
+        original_evidence={
+            "wrong_line": "def compute_quantiles(csv_path, quantiles):",
+            "correct_approach": "Define the exact get_column_quantiles(csv_path, quantiles) entry point expected by the harness.",
+            "failed_test": "NameError: name 'get_column_quantiles' is not defined",
+        },
+        spec_index=1,
+    )
+
+    assert spec.problem_spec.must_cover == [
+        "Require an exact public function named get_column_quantiles.",
+    ]
+
+
+def test_function_name_mismatch_extracts_expected_identifier_from_natural_language() -> None:
+    from codemint.synthesize.generate import generate_spec
+
+    weakness = WeaknessEntry(
+        rank=1,
+        fault_type="implementation",
+        sub_tags=["function_name_mismatch"],
+        frequency=1,
+        sample_task_ids=[237],
+        trainability=0.6,
+        collective_diagnosis=CollectiveDiagnosis(
+            refined_root_cause="Implementation-level contract mismatch where the wrong public identifier is exposed.",
+            capability_cliff="Breaks when success depends on reproducing the exact tested symbol name.",
+            misdiagnosed_ids=[],
+            misdiagnosis_corrections={},
+            cluster_coherence=0.95,
+        ),
+    )
+
+    spec = generate_spec(
+        weakness,
+        diversity_tags=DiversityTags(
+            narrative_theme="warehouses",
+            data_structure="array",
+            constraint_scale="small",
+        ),
+        invoke_model=lambda prompt: {
+            "algorithm_type": "simulation",
+            "difficulty": "medium",
+            "narrative_theme": "warehouses",
+            "constraints": {
+                "n_range": [1, 100],
+                "value_range": [0, 1000],
+                "time_limit": "1s",
+                "memory_limit": "256MB",
+            },
+            "key_trap": "The original evidence failed because the harness expected the exact public identifier `myLiteral` but the submission exposed `myVariable` instead.",
+            "must_cover": ["single exact public function contract"],
+            "must_avoid": ["alternate public function names"],
+            "verification_spec": {
+                "min_test_cases": 4,
+                "must_include_edge_cases": ["single value input"],
+                "brute_force_verifiable": True,
+                "brute_force_complexity_limit": "O(n^2)",
+            },
+            "generation_hints": {
+                "solution_approach": "Expose the exact public identifier `myLiteral` expected by the harness.",
+                "common_wrong_approach": "Expose `myVariable` instead of the expected identifier.",
+                "distinguishing_test": "Harness imports only `myLiteral`.",
+            },
+            "language_constraint": {
+                "target_languages": ["python"],
+                "language_specific": False,
+            },
+        },
+        original_evidence={
+            "wrong_line": "myVariable = 1",
+            "correct_approach": "Use the exact public identifier myLiteral expected by the harness.",
+            "failed_test": "ImportError: cannot import name 'myLiteral'",
+        },
+        spec_index=1,
+    )
+
+    assert spec.problem_spec.must_cover == [
+        "Require the exact public symbol myLiteral.",
+    ]
+
+
+def test_function_name_mismatch_renders_expected_public_attribute_contract() -> None:
+    from codemint.synthesize.generate import generate_spec
+
+    weakness = WeaknessEntry(
+        rank=1,
+        fault_type="implementation",
+        sub_tags=["function_name_mismatch"],
+        frequency=1,
+        sample_task_ids=[238],
+        trainability=0.6,
+        collective_diagnosis=CollectiveDiagnosis(
+            refined_root_cause="Implementation-level contract mismatch where the wrong public member is exposed.",
+            capability_cliff="Breaks when the harness expects an exact public attribute instead of an alternate bound member.",
+            misdiagnosed_ids=[],
+            misdiagnosis_corrections={},
+            cluster_coherence=0.95,
+        ),
+    )
+
+    spec = generate_spec(
+        weakness,
+        diversity_tags=DiversityTags(
+            narrative_theme="warehouses",
+            data_structure="array",
+            constraint_scale="small",
+        ),
+        invoke_model=lambda prompt: {
+            "algorithm_type": "simulation",
+            "difficulty": "medium",
+            "narrative_theme": "warehouses",
+            "constraints": {
+                "n_range": [1, 100],
+                "value_range": [0, 1000],
+                "time_limit": "1s",
+                "memory_limit": "256MB",
+            },
+            "key_trap": (
+                "The original evidence failed because the harness expected the exact public "
+                "identifier `window.start_button`, but the submission exposed `mouseClick` instead."
+            ),
+            "must_cover": ["single exact public member contract"],
+            "must_avoid": ["alternate public function names"],
+            "verification_spec": {
+                "min_test_cases": 4,
+                "must_include_edge_cases": ["single button state"],
+                "brute_force_verifiable": True,
+                "brute_force_complexity_limit": "O(n^2)",
+            },
+            "generation_hints": {
+                "solution_approach": "Expose the exact public attribute `window.start_button` expected by the harness.",
+                "common_wrong_approach": "Expose `mouseClick` instead of the expected public attribute.",
+                "distinguishing_test": "Harness accesses only `window.start_button`.",
+            },
+            "language_constraint": {
+                "target_languages": ["python"],
+                "language_specific": False,
+            },
+        },
+        original_evidence={
+            "wrong_line": "mouseClick = handler",
+            "correct_approach": "Expose the exact public identifier window.start_button expected by the harness.",
+            "failed_test": "AttributeError: object has no attribute 'start_button'",
+        },
+        spec_index=1,
+    )
+
+    assert spec.problem_spec.must_cover == [
+        "Require the exact public attribute window.start_button on the expected object.",
+    ]
+
+
+def test_function_name_mismatch_rewrites_key_trap_and_hints_to_resolved_target() -> None:
+    from codemint.synthesize.generate import generate_spec
+
+    weakness = WeaknessEntry(
+        rank=1,
+        fault_type="implementation",
+        sub_tags=["function_name_mismatch"],
+        frequency=1,
+        sample_task_ids=[239],
+        trainability=0.6,
+        collective_diagnosis=CollectiveDiagnosis(
+            refined_root_cause="Implementation-level public contract mismatch.",
+            capability_cliff="Breaks when the tested public target is stricter than the model's free-text summary.",
+            misdiagnosed_ids=[],
+            misdiagnosis_corrections={},
+            cluster_coherence=0.95,
+        ),
+    )
+
+    spec = generate_spec(
+        weakness,
+        diversity_tags=DiversityTags(
+            narrative_theme="warehouses",
+            data_structure="array",
+            constraint_scale="small",
+        ),
+        invoke_model=lambda prompt: {
+            "algorithm_type": "simulation",
+            "difficulty": "medium",
+            "narrative_theme": "warehouses",
+            "constraints": {
+                "n_range": [1, 100],
+                "value_range": [0, 1000],
+                "time_limit": "1s",
+                "memory_limit": "256MB",
+            },
+            "key_trap": (
+                "The original evidence failed because Euler_totient_function(15) returned a whole list "
+                "and the task must enforce one exact callable entry point."
+            ),
+            "must_cover": ["single exact public function contract"],
+            "must_avoid": ["alternate public function names"],
+            "verification_spec": {
+                "min_test_cases": 4,
+                "must_include_edge_cases": ["single value input"],
+                "brute_force_verifiable": True,
+                "brute_force_complexity_limit": "O(n^2)",
+            },
+            "generation_hints": {
+                "solution_approach": "Use dynamic programming and return one final scalar answer.",
+                "common_wrong_approach": "Return a whole list or expose solve_dp instead of the intended target.",
+                "distinguishing_test": "Call only min_restock_cost and reject lists of intermediate states.",
+            },
+            "language_constraint": {
+                "target_languages": ["python"],
+                "language_specific": False,
+            },
+        },
+        original_evidence={
+            "wrong_line": "return phi[1:]",
+            "correct_approach": "Define the exact public function Euler_totient_function(n) expected by the harness.",
+            "failed_test": "assert Euler_totient_function(15) == 8",
+        },
+        spec_index=1,
+    )
+
+    assert spec.problem_spec.must_cover == [
+        "Require an exact public function named Euler_totient_function.",
+    ]
+    assert "exact public function `Euler_totient_function`" in spec.problem_spec.key_trap
+    assert "solve_dp" not in spec.problem_spec.key_trap
+    assert spec.generation_hints.solution_approach == "Implement the exact public function `Euler_totient_function`."
+    assert spec.generation_hints.common_wrong_approach == (
+        "Expose a different public function name or public output shape than the exact public function `Euler_totient_function`."
+    )
+    assert spec.generation_hints.distinguishing_test == (
+        "Call only the exact public function `Euler_totient_function` and reject alternate public names or output shapes."
+    )
 
 
 def _weakness() -> WeaknessEntry:
