@@ -42,7 +42,9 @@ Rules:
 - `must_cover` and `must_avoid` must be arrays of strings, never a single string.
 - `difficulty` must be exactly `medium` or `hard`.
 - `key_trap` must concretely reference the supplied original evidence instead of generic wording.
-- Always treat `weakness.sub_tags[0]` as the primary contract to encode in `must_cover` and `must_avoid`.
+- Always treat `weakness.primary_sub_tag` as the primary contract to encode in `must_cover` and `must_avoid`.
+- If `language_profile` is supplied and `language_profile.primary_language` is not `unknown`, keep `language_constraint` aligned with `language_profile.target_languages`.
+- Do not rewrite a known non-Python target language into Python; only default to Python when the inferred language is `unknown`.
 - If `repair_context.missing_contracts` is present, you must explicitly satisfy every missing contract in the regenerated answer.
 - If the weakness is `function_name_mismatch`, `must_cover` must require one exact callable public entry point and `must_avoid` must forbid alternate public function names.
 - If the weakness is `function_name_mismatch`, `key_trap` should mention the concrete wrong callable from the original evidence when available, such as `solve_value` or `solver`.

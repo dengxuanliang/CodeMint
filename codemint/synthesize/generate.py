@@ -20,6 +20,7 @@ from codemint.models.spec import (
 )
 from codemint.models.weakness import WeaknessEntry
 from codemint.prompts.registry import load_prompt
+from codemint.synthesize.input_view import build_synthesis_input_view
 
 
 class GenerationResponse(StrictModel):
@@ -47,21 +48,33 @@ def generate_spec(
     repair_context: dict[str, str] | None = None,
 ) -> SpecRecord:
     prompt = load_prompt("synthesize_spec_generation")
+    input_view = build_synthesis_input_view(weakness, original_evidence)
+    inferred_language_constraint = _inferred_language_constraint(input_view)
     payload = {
         "template": prompt.template,
         "weakness": {
-            "fault_type": weakness.fault_type,
-            "sub_tags": weakness.sub_tags,
-            "root_cause": weakness.collective_diagnosis.refined_root_cause,
-            "capability_cliff": weakness.collective_diagnosis.capability_cliff,
+            "fault_type": input_view.fault_type,
+            "primary_sub_tag": input_view.primary_sub_tag,
+            "frequency": input_view.frequency,
+            "sample_task_ids": input_view.sample_task_ids,
+            "canonical_summary": input_view.canonical_summary,
         },
-        "original_evidence": original_evidence,
+        "original_evidence": input_view.representative_evidence,
+        "language_profile": {
+            "primary_language": input_view.primary_language,
+            "target_languages": input_view.target_languages,
+            "language_specific": input_view.language_specific,
+        },
         "diversity_tags": diversity_tags.model_dump(mode="json"),
         "difficulty": difficulty,
         "must_avoid_constraints": must_avoid_constraints or [],
         "repair_context": repair_context or {"mode": "initial_generation", "reason": ""},
     }
     response = _validate_response(invoke_model(payload))
+    response_language_constraint = _resolved_language_constraint(
+        response.language_constraint,
+        inferred_language_constraint,
+    )
     assigned_difficulty = difficulty or response.difficulty
     key_trap = _require_evidence_grounding(response.key_trap, original_evidence)
     must_cover = _augment_must_cover(weakness, response.must_cover)
@@ -73,8 +86,8 @@ def generate_spec(
         target_weakness=TargetWeakness(
             fault_type=weakness.fault_type,
             sub_tags=weakness.sub_tags,
-            root_cause=weakness.collective_diagnosis.refined_root_cause,
-            capability_cliff=weakness.collective_diagnosis.capability_cliff,
+            root_cause=input_view.primary_sub_tag,
+            capability_cliff=input_view.canonical_summary,
         ),
         problem_spec=ProblemSpec(
             algorithm_type=response.algorithm_type,
@@ -88,7 +101,7 @@ def generate_spec(
         verification_spec=response.verification_spec,
         diversity_tags=diversity_tags,
         generation_hints=response.generation_hints,
-        language_constraint=response.language_constraint,
+        language_constraint=response_language_constraint,
         prompt_version=prompt.version,
     )
 
@@ -96,6 +109,7 @@ def generate_spec(
 def default_invoke_model(payload: dict[str, Any]) -> dict[str, Any]:
     weakness = payload["weakness"]
     evidence = payload["original_evidence"]
+    language_profile = payload["language_profile"]
     diversity = payload["diversity_tags"]
     difficulty = payload["difficulty"] or "medium"
     scale = diversity["constraint_scale"]
@@ -106,7 +120,7 @@ def default_invoke_model(payload: dict[str, Any]) -> dict[str, Any]:
         "narrative_theme": diversity["narrative_theme"],
         "constraints": _constraints_for_scale(scale),
         "key_trap": f"Reference the original evidence: {evidence['wrong_line']}",
-        "must_cover": [*weakness["sub_tags"][:2], evidence["correct_approach"]],
+        "must_cover": [weakness["primary_sub_tag"], evidence["correct_approach"]],
         "must_avoid": ["verbatim reuse of prior tasks", *payload["must_avoid_constraints"]],
         "verification_spec": {
             "min_test_cases": 4 if difficulty == "medium" else 5,
@@ -120,8 +134,10 @@ def default_invoke_model(payload: dict[str, Any]) -> dict[str, Any]:
             "distinguishing_test": evidence["failed_test"],
         },
         "language_constraint": {
-            "target_languages": ["python"],
-            "language_specific": False,
+            "target_languages": language_profile["target_languages"]
+            if language_profile["primary_language"] != "unknown"
+            else ["python"],
+            "language_specific": language_profile["language_specific"],
         },
     }
 
@@ -539,16 +555,54 @@ def _normalize_language_constraint(value: Any) -> Any:
 
     lowered = value.lower()
     targets: list[str] = []
-    if "python" in lowered:
-        targets.append("python")
-    if "cpp" in lowered or "c++" in lowered:
-        targets.append("cpp")
-    if "java" in lowered:
-        targets.append("java")
+    language_patterns = [
+        ("python", r"\bpython\b"),
+        ("cpp", r"\bcpp\b|\bc\+\+\b"),
+        ("javascript", r"\bjavascript\b"),
+        ("typescript", r"\btypescript\b"),
+        ("java", r"\bjava\b"),
+        ("go", r"\bgo\b"),
+        ("rust", r"\brust\b"),
+        ("r", r"\br\b"),
+    ]
+    for language, pattern in language_patterns:
+        if re.search(pattern, lowered) and language not in targets:
+            targets.append(language)
     return {
         "target_languages": targets or ["python"],
         "language_specific": len(targets) == 1,
     }
+
+
+def _inferred_language_constraint(input_view) -> LanguageConstraint:
+    if input_view.primary_language == "unknown":
+        return LanguageConstraint(
+            target_languages=["python"],
+            language_specific=False,
+        )
+
+    return LanguageConstraint(
+        target_languages=list(input_view.target_languages),
+        language_specific=input_view.language_specific,
+    )
+
+
+def _resolved_language_constraint(
+    model_constraint: LanguageConstraint,
+    inferred_constraint: LanguageConstraint,
+) -> LanguageConstraint:
+    inferred_languages = set(inferred_constraint.target_languages)
+    if inferred_constraint.target_languages == ["python"] and not inferred_constraint.language_specific:
+        return model_constraint
+
+    model_languages = set(model_constraint.target_languages)
+    if model_languages and inferred_languages.issubset(model_languages):
+        return model_constraint
+
+    if model_languages:
+        return inferred_constraint
+
+    return inferred_constraint
 
 
 def _extract_labeled_segment(text: str, label: str) -> str:

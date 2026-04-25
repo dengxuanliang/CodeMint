@@ -8,6 +8,7 @@ from codemint.models.spec import DiversityTags, SpecRecord
 from codemint.models.weakness import WeaknessEntry
 
 from codemint.synthesize.allocation import weakness_key
+from codemint.synthesize.language_profile import infer_language_profile
 
 
 CONSTRAINT_SCALES = ("small", "medium", "large")
@@ -91,6 +92,7 @@ def plan_diversity_tags(
 
 
 def _planned_specs(planned: list[DiversityTags], weakness: WeaknessEntry) -> list[SpecRecord]:
+    language_constraint = _placeholder_language_constraint(weakness)
     return [
         SpecRecord(
             spec_id=f"planned-{index}",
@@ -126,14 +128,32 @@ def _planned_specs(planned: list[DiversityTags], weakness: WeaknessEntry) -> lis
                 "common_wrong_approach": "placeholder",
                 "distinguishing_test": "placeholder",
             },
-            language_constraint={
-                "target_languages": ["python"],
-                "language_specific": False,
-            },
+            language_constraint=language_constraint,
             prompt_version="planned",
         )
         for index, tags in enumerate(planned, start=1)
     ]
+
+
+def _placeholder_language_constraint(
+    weakness: WeaknessEntry,
+) -> dict[str, object]:
+    profile = infer_language_profile(
+        {
+            "wrong_line": weakness.collective_diagnosis.refined_root_cause,
+            "correct_approach": weakness.collective_diagnosis.capability_cliff,
+            "failed_test": weakness_key(weakness),
+        }
+    )
+    if profile.primary_language == "unknown":
+        return {
+            "target_languages": ["python"],
+            "language_specific": False,
+        }
+    return {
+        "target_languages": list(profile.target_languages),
+        "language_specific": profile.language_specific,
+    }
 
 
 def _relevant_existing_specs(existing_specs: list[SpecRecord], weakness: WeaknessEntry) -> list[SpecRecord]:

@@ -67,6 +67,67 @@ def test_plan_diversity_tags_only_considers_existing_specs_for_same_weakness() -
     assert len(planned) == 2
     assert planned[0] != planned[1]
 
+def test_planned_specs_default_to_python_when_language_is_unknown() -> None:
+    from codemint.synthesize.diversity import _planned_specs
+
+    planned = _planned_specs(
+        [
+            DiversityTags(
+                narrative_theme="warehouses",
+                data_structure="array",
+                constraint_scale="small",
+            )
+        ],
+        _weakness("syntax_error"),
+    )
+
+    assert planned[0].language_constraint.target_languages == ["python"]
+    assert planned[0].language_constraint.language_specific is False
+
+
+def test_planned_specs_use_inferred_r_language_when_weakness_context_is_r_specific() -> None:
+    from codemint.synthesize.diversity import _planned_specs
+
+    planned = _planned_specs(
+        [
+            DiversityTags(
+                narrative_theme="warehouses",
+                data_structure="array",
+                constraint_scale="small",
+            )
+        ],
+        _weakness(
+            "markdown_formatting",
+            root_cause="Omit the ```R and ``` markdown fences and output only raw executable R code.",
+            capability_cliff="R source failed because markdown fences were present.",
+        ),
+    )
+
+    assert planned[0].language_constraint.target_languages == ["r"]
+    assert planned[0].language_constraint.language_specific is True
+
+
+def test_planned_specs_use_inferred_java_language_when_weakness_context_is_java_specific() -> None:
+    from codemint.synthesize.diversity import _planned_specs
+
+    planned = _planned_specs(
+        [
+            DiversityTags(
+                narrative_theme="warehouses",
+                data_structure="array",
+                constraint_scale="small",
+            )
+        ],
+        _weakness(
+            "missing_code_block",
+            root_cause="Return executable Java code with public static int solve(int x).",
+            capability_cliff="The Java harness expected a compilable solve(int) method.",
+        ),
+    )
+
+    assert planned[0].language_constraint.target_languages == ["java"]
+    assert planned[0].language_constraint.language_specific is True
+
 
 def _spec(
     spec_id: str,
@@ -122,7 +183,12 @@ def _spec(
     )
 
 
-def _weakness(tag: str) -> WeaknessEntry:
+def _weakness(
+    tag: str,
+    *,
+    root_cause: str | None = None,
+    capability_cliff: str | None = None,
+) -> WeaknessEntry:
     return WeaknessEntry(
         rank=1,
         fault_type="implementation",
@@ -131,8 +197,8 @@ def _weakness(tag: str) -> WeaknessEntry:
         sample_task_ids=[1, 2],
         trainability=0.6,
         collective_diagnosis=CollectiveDiagnosis(
-            refined_root_cause=f"{tag} root cause",
-            capability_cliff=f"{tag} cliff",
+            refined_root_cause=root_cause or f"{tag} root cause",
+            capability_cliff=capability_cliff or f"{tag} cliff",
             misdiagnosed_ids=[],
             misdiagnosis_corrections={},
             cluster_coherence=0.9,

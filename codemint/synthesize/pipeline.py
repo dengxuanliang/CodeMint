@@ -14,6 +14,7 @@ from codemint.synthesize.allocation import allocate_specs, select_top_weaknesses
 from codemint.synthesize.diversity import assign_diversity_tags, plan_diversity_tags
 from codemint.synthesize.feasibility import check_feasibility
 from codemint.synthesize.generate import default_invoke_model, generate_spec, parse_generation_response
+from codemint.synthesize.language_profile import infer_language_profile
 
 
 def run_synthesize(
@@ -276,6 +277,7 @@ def _fallback_spec_for_weakness(
 ) -> SpecRecord | None:
     key = weakness_key(weakness)
     evidence_reference = _evidence_reference(original_evidence)
+    fallback_language = _fallback_language_profile(original_evidence)
     if key == "function_name_mismatch":
         wrong_entrypoint, target_entrypoint = _entrypoints_from_evidence(original_evidence)
         return generate_spec(
@@ -314,10 +316,7 @@ def _fallback_spec_for_weakness(
                     "common_wrong_approach": f"Expose {wrong_entrypoint} instead of {target_entrypoint}.",
                     "distinguishing_test": f"Call {target_entrypoint} directly and reject any alternate public function name.",
                 },
-                "language_constraint": {
-                    "target_languages": ["python"],
-                    "language_specific": False,
-                },
+                "language_constraint": fallback_language,
             },
             original_evidence=original_evidence,
             spec_index=spec_index,
@@ -326,6 +325,7 @@ def _fallback_spec_for_weakness(
             repair_context={"mode": "fallback_generation", "reason": "deterministic function name mismatch fallback"},
         )
     if key == "markdown_formatting":
+        executable_noun = _executable_code_noun(fallback_language["target_languages"][0])
         return generate_spec(
             weakness,
             diversity_tags=diversity_tags,
@@ -341,9 +341,9 @@ def _fallback_spec_for_weakness(
                 },
                 "key_trap": (
                     f"The trap reproduces the original evidence `{evidence_reference}` "
-                    "with markdown fences instead of raw executable code."
+                    f"with markdown fences instead of raw executable {executable_noun}."
                 ),
-                "must_cover": ["raw executable code output"],
+                "must_cover": [f"raw executable {executable_noun} output"],
                 "must_avoid": ["fenced code blocks", "wrapping delimiters"],
                 "verification_spec": {
                     "min_test_cases": 4,
@@ -352,14 +352,11 @@ def _fallback_spec_for_weakness(
                     "brute_force_complexity_limit": "O(n^2)",
                 },
                 "generation_hints": {
-                    "solution_approach": "Return raw executable code only.",
+                    "solution_approach": f"Return raw executable {executable_noun} only.",
                     "common_wrong_approach": "Wrap the answer in markdown fences.",
                     "distinguishing_test": "Reject output if it contains ``` or stray backticks.",
                 },
-                "language_constraint": {
-                    "target_languages": ["python"],
-                    "language_specific": False,
-                },
+                "language_constraint": fallback_language,
             },
             original_evidence=original_evidence,
             spec_index=spec_index,
@@ -369,11 +366,8 @@ def _fallback_spec_for_weakness(
         )
     if key == "missing_code_block":
         _, target_entrypoint = _entrypoints_from_evidence(original_evidence)
-        entrypoint_clause = (
-            f"the requested `{target_entrypoint}` entry point"
-            if target_entrypoint != "the requested entry point"
-            else "the requested executable implementation"
-        )
+        entrypoint_clause = _missing_code_block_entrypoint_clause(fallback_language["target_languages"][0], target_entrypoint)
+        executable_clause = _missing_code_block_executable_clause(fallback_language["target_languages"][0], entrypoint_clause)
         return generate_spec(
             weakness,
             diversity_tags=diversity_tags,
@@ -391,7 +385,7 @@ def _fallback_spec_for_weakness(
                     "The trap fails when the solver explains the approach instead of returning "
                     f"{entrypoint_clause}."
                 ),
-                "must_cover": [f"executable code output with {entrypoint_clause}"],
+                "must_cover": [f"{executable_clause}"],
                 "must_avoid": ["explanation-only answers", "prose-only final responses"],
                 "verification_spec": {
                     "min_test_cases": 4,
@@ -400,14 +394,14 @@ def _fallback_spec_for_weakness(
                     "brute_force_complexity_limit": "O(n^2)",
                 },
                 "generation_hints": {
-                    "solution_approach": f"Return {entrypoint_clause} directly as executable code.",
+                    "solution_approach": _missing_code_block_solution_approach(
+                        fallback_language["target_languages"][0],
+                        entrypoint_clause,
+                    ),
                     "common_wrong_approach": "Explain the intended code without emitting it.",
                     "distinguishing_test": f"Check that {entrypoint_clause} exists as runnable code.",
                 },
-                "language_constraint": {
-                    "target_languages": ["python"],
-                    "language_specific": False,
-                },
+                "language_constraint": fallback_language,
             },
             original_evidence=original_evidence,
             spec_index=spec_index,
@@ -416,7 +410,10 @@ def _fallback_spec_for_weakness(
             repair_context={"mode": "fallback_generation", "reason": "deterministic missing code fallback"},
         )
     if key == "syntax_error":
-        return generate_spec(
+        executable_clause = _syntax_error_executable_clause(fallback_language["target_languages"][0])
+        wrong_fragment = evidence_reference or "the original incomplete code fragment"
+        syntax_avoid = _syntax_error_must_avoid(fallback_language["target_languages"][0])
+        spec = generate_spec(
             weakness,
             diversity_tags=diversity_tags,
             invoke_model=lambda payload: {
@@ -429,9 +426,9 @@ def _fallback_spec_for_weakness(
                     "time_limit": "1s",
                     "memory_limit": "256MB",
                 },
-                "key_trap": "The trap reproduces the original def solve(x) header without the required colon.",
-                "must_cover": ["syntactically complete executable code with a valid solve(x) definition"],
-                "must_avoid": ["incomplete code", "missing colons", "malformed function headers"],
+                "key_trap": f"The trap reproduces the original incomplete syntax fragment `{wrong_fragment}` instead of executable code that parses cleanly.",
+                "must_cover": [executable_clause],
+                "must_avoid": syntax_avoid,
                 "verification_spec": {
                     "min_test_cases": 4,
                     "must_include_edge_cases": ["single value input"],
@@ -439,20 +436,23 @@ def _fallback_spec_for_weakness(
                     "brute_force_complexity_limit": "O(n^2)",
                 },
                 "generation_hints": {
-                    "solution_approach": "Return syntactically valid executable code.",
-                    "common_wrong_approach": "Omit the colon after the function header.",
-                    "distinguishing_test": "Parse the final code before execution.",
+                    "solution_approach": _syntax_error_solution_approach(fallback_language["target_languages"][0]),
+                    "common_wrong_approach": f"Repeat the incomplete syntax from `{wrong_fragment}`.",
+                    "distinguishing_test": _syntax_error_distinguishing_test(fallback_language["target_languages"][0]),
                 },
-                "language_constraint": {
-                    "target_languages": ["python"],
-                    "language_specific": False,
-                },
+                "language_constraint": fallback_language,
             },
             original_evidence=original_evidence,
             spec_index=spec_index,
             difficulty=difficulty,
             must_avoid_constraints=must_avoid_constraints,
             repair_context={"mode": "fallback_generation", "reason": "deterministic syntax error fallback"},
+        )
+        return _rewrite_syntax_error_fallback_spec(
+            spec,
+            fallback_language["target_languages"][0],
+            syntax_avoid,
+            must_avoid_constraints,
         )
     if key == "non_executable_code":
         return generate_spec(
@@ -487,10 +487,7 @@ def _fallback_spec_for_weakness(
                     "common_wrong_approach": "Echo, translate, or explain the prompt without emitting executable code.",
                     "distinguishing_test": "Reject outputs that cannot be imported or executed by the harness.",
                 },
-                "language_constraint": {
-                    "target_languages": ["python"],
-                    "language_specific": False,
-                },
+                "language_constraint": fallback_language,
             },
             original_evidence=original_evidence,
             spec_index=spec_index,
@@ -510,6 +507,100 @@ def _evidence_reference(original_evidence: dict[str, str]) -> str:
         if candidate:
             return candidate[:120]
     return wrong_line[:120] or "original failing output"
+
+
+def _fallback_language_profile(original_evidence: dict[str, str]) -> dict[str, object]:
+    profile = infer_language_profile(original_evidence)
+    if profile.primary_language == "unknown":
+        return {
+            "target_languages": ["python"],
+            "language_specific": False,
+        }
+    return {
+        "target_languages": list(profile.target_languages),
+        "language_specific": profile.language_specific,
+    }
+
+
+def _executable_code_noun(language: str) -> str:
+    if language == "r":
+        return "R code"
+    if language == "java":
+        return "Java code"
+    if language == "cpp":
+        return "C++ code"
+    if language == "javascript":
+        return "JavaScript code"
+    if language == "typescript":
+        return "TypeScript code"
+    if language == "go":
+        return "Go code"
+    if language == "rust":
+        return "Rust code"
+    return "code"
+
+
+def _missing_code_block_entrypoint_clause(language: str, target_entrypoint: str) -> str:
+    if target_entrypoint == "the requested entry point":
+        return "the requested executable implementation"
+    if language == "java":
+        return f"the requested `{target_entrypoint}` method"
+    return f"the requested `{target_entrypoint}` entry point"
+
+
+def _missing_code_block_executable_clause(language: str, entrypoint_clause: str) -> str:
+    if language == "java":
+        return f"executable Java code output with {entrypoint_clause}"
+    return f"executable code output with {entrypoint_clause}"
+
+
+def _missing_code_block_solution_approach(language: str, entrypoint_clause: str) -> str:
+    if language == "java":
+        return f"Return {entrypoint_clause} directly as executable Java code."
+    return f"Return {entrypoint_clause} directly as executable code."
+
+
+def _syntax_error_executable_clause(language: str) -> str:
+    if language == "java":
+        return "syntactically complete executable Java code that compiles cleanly"
+    return "syntactically complete executable code"
+
+
+def _syntax_error_solution_approach(language: str) -> str:
+    if language == "java":
+        return "Return syntactically valid executable Java code."
+    return "Return syntactically valid executable code."
+
+
+def _syntax_error_distinguishing_test(language: str) -> str:
+    if language == "java":
+        return "Compile the final Java code before execution."
+    return "Parse the final code before execution."
+
+
+def _syntax_error_must_avoid(language: str) -> list[str]:
+    if language == "java":
+        return ["incomplete code", "missing braces", "malformed method headers"]
+    if language in {"cpp", "javascript", "typescript", "go", "rust", "r"}:
+        return ["incomplete code", "missing required punctuation", "malformed code structure"]
+    return ["incomplete code", "missing colons", "malformed function headers"]
+
+
+def _rewrite_syntax_error_fallback_spec(
+    spec: SpecRecord,
+    language: str,
+    syntax_avoid: list[str],
+    must_avoid_constraints: list[str],
+) -> SpecRecord:
+    if language == "python":
+        return spec
+    return spec.model_copy(
+        update={
+            "problem_spec": spec.problem_spec.model_copy(
+                update={"must_avoid": syntax_avoid + must_avoid_constraints}
+            )
+        }
+    )
 
 
 def _entrypoints_from_evidence(original_evidence: dict[str, str]) -> tuple[str, str]:
@@ -634,9 +725,9 @@ def _evidence_for_weakness(
         return original_evidence[key]
 
     return {
-        "wrong_line": weakness.collective_diagnosis.refined_root_cause,
-        "correct_approach": weakness.collective_diagnosis.capability_cliff,
-        "failed_test": f"Reproduce failure around {key}",
+        "wrong_line": f"Representative {key} failure pattern.",
+        "correct_approach": f"Implement the required {key} contract correctly.",
+        "failed_test": f"Representative failure unavailable for {key}",
     }
 
 

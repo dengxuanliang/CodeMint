@@ -767,6 +767,337 @@ def test_generated_spec_rejects_new_function_names_not_grounded_in_evidence() ->
         )
 
 
+def test_generate_spec_payload_uses_canonical_summary_not_aggregate_narrative() -> None:
+    from codemint.synthesize.generate import generate_spec
+
+    weakness = _weakness()
+    seen: dict[str, object] = {}
+
+    def invoke_model(payload):
+        seen.update(payload)
+        return {
+            "algorithm_type": "prefix sums",
+            "difficulty": "medium",
+            "narrative_theme": "sensors",
+            "constraints": {
+                "n_range": [1, 5000],
+                "value_range": [0, 1000],
+                "time_limit": "1s",
+                "memory_limit": "256MB",
+            },
+            "key_trap": (
+                "The trap keeps `range(l, r)` in place and only passes when the solver "
+                "checks the terminal index after each expansion instead of skipping it."
+            ),
+            "must_cover": ["off_by_one", "boundary updates"],
+            "must_avoid": ["sorting"],
+            "verification_spec": {
+                "min_test_cases": 4,
+                "must_include_edge_cases": ["single element", "last segment"],
+                "brute_force_verifiable": True,
+                "brute_force_complexity_limit": "O(n^2)",
+            },
+            "generation_hints": {
+                "solution_approach": "Track prefix totals and compare window endpoints.",
+                "common_wrong_approach": "Shift the right pointer before evaluating the current window.",
+                "distinguishing_test": "A valid window ending at the final index",
+            },
+            "language_constraint": {
+                "target_languages": ["python", "cpp"],
+                "language_specific": False,
+            },
+        }
+
+    spec = generate_spec(
+        weakness,
+        diversity_tags=DiversityTags(
+            narrative_theme="sensors",
+            data_structure="array",
+            constraint_scale="medium",
+        ),
+        invoke_model=invoke_model,
+        original_evidence=_original_evidence(),
+        spec_index=1,
+    )
+
+    weakness_payload = seen["weakness"]
+    assert "root_cause" not in weakness_payload
+    assert "capability_cliff" not in weakness_payload
+    assert weakness_payload["primary_sub_tag"] == "off_by_one"
+    assert weakness_payload["canonical_summary"] == "Model computes the wrong result with executable logic."
+    assert spec.target_weakness.root_cause == "off_by_one"
+    assert spec.target_weakness.capability_cliff == "Model computes the wrong result with executable logic."
+
+
+def test_language_constraint_payload_includes_inferred_r_language_profile() -> None:
+    from codemint.synthesize.generate import generate_spec
+
+    seen: dict[str, object] = {}
+
+    def invoke_model(payload):
+        seen.update(payload)
+        return _generation_response(target_languages=["r"], language_specific=True)
+
+    generate_spec(
+        _weakness(),
+        diversity_tags=DiversityTags(
+            narrative_theme="signals",
+            data_structure="array",
+            constraint_scale="medium",
+        ),
+        invoke_model=invoke_model,
+        original_evidence=_r_original_evidence(),
+        spec_index=1,
+    )
+
+    assert seen["language_profile"] == {
+        "primary_language": "r",
+        "target_languages": ["r"],
+        "language_specific": True,
+    }
+
+
+def test_language_constraint_uses_inferred_r_language_with_default_model() -> None:
+    from codemint.synthesize.generate import default_invoke_model, generate_spec
+
+    spec = generate_spec(
+        _weakness(),
+        diversity_tags=DiversityTags(
+            narrative_theme="signals",
+            data_structure="array",
+            constraint_scale="medium",
+        ),
+        invoke_model=default_invoke_model,
+        original_evidence=_r_original_evidence(),
+        spec_index=1,
+    )
+
+    assert spec.language_constraint.target_languages == ["r"]
+    assert spec.language_constraint.language_specific is True
+
+
+def test_language_constraint_uses_inferred_java_language_with_default_model() -> None:
+    from codemint.synthesize.generate import default_invoke_model, generate_spec
+
+    spec = generate_spec(
+        _weakness(),
+        diversity_tags=DiversityTags(
+            narrative_theme="signals",
+            data_structure="array",
+            constraint_scale="medium",
+        ),
+        invoke_model=default_invoke_model,
+        original_evidence=_java_original_evidence(),
+        spec_index=1,
+    )
+
+    assert spec.language_constraint.target_languages == ["java"]
+    assert spec.language_constraint.language_specific is True
+
+
+def test_language_constraint_defaults_to_python_with_unknown_evidence() -> None:
+    from codemint.synthesize.generate import default_invoke_model, generate_spec
+
+    spec = generate_spec(
+        _weakness(),
+        diversity_tags=DiversityTags(
+            narrative_theme="signals",
+            data_structure="array",
+            constraint_scale="medium",
+        ),
+        invoke_model=default_invoke_model,
+        original_evidence=_unknown_language_evidence(),
+        spec_index=1,
+    )
+
+    assert spec.language_constraint.target_languages == ["python"]
+    assert spec.language_constraint.language_specific is False
+
+
+def test_language_constraint_corrects_conflicting_model_output_for_known_language() -> None:
+    from codemint.synthesize.generate import generate_spec
+
+    spec = generate_spec(
+        _weakness(),
+        diversity_tags=DiversityTags(
+            narrative_theme="signals",
+            data_structure="array",
+            constraint_scale="medium",
+        ),
+        invoke_model=lambda payload: _generation_response(
+            target_languages=["python"],
+            language_specific=False,
+        ),
+        original_evidence=_r_original_evidence(),
+        spec_index=1,
+    )
+
+    assert spec.language_constraint.target_languages == ["r"]
+    assert spec.language_constraint.language_specific is True
+
+
+def test_language_constraint_preserves_broader_model_output_when_known_language_is_included() -> None:
+    from codemint.synthesize.generate import generate_spec
+
+    spec = generate_spec(
+        _weakness(),
+        diversity_tags=DiversityTags(
+            narrative_theme="signals",
+            data_structure="array",
+            constraint_scale="medium",
+        ),
+        invoke_model=lambda payload: _generation_response(
+            target_languages=["r", "python"],
+            language_specific=False,
+        ),
+        original_evidence=_r_original_evidence(),
+        spec_index=1,
+    )
+
+    assert spec.language_constraint.target_languages == ["r", "python"]
+    assert spec.language_constraint.language_specific is False
+
+
+def test_unknown_evidence_preserves_non_default_model_language_constraint() -> None:
+    from codemint.synthesize.generate import generate_spec
+
+    spec = generate_spec(
+        _weakness(),
+        diversity_tags=DiversityTags(
+            narrative_theme="signals",
+            data_structure="array",
+            constraint_scale="medium",
+        ),
+        invoke_model=lambda payload: _generation_response(
+            key_trap="The trap reproduces the original final code block is missing failure.",
+            target_languages=["java", "python"],
+            language_specific=False,
+        ),
+        original_evidence=_unknown_language_evidence(),
+        spec_index=1,
+    )
+
+    assert spec.language_constraint.target_languages == ["java", "python"]
+    assert spec.language_constraint.language_specific is False
+
+
+@pytest.mark.parametrize(
+    ("raw_value", "expected_targets"),
+    [
+        ("R", ["r"]),
+        ("JavaScript", ["javascript"]),
+        ("TypeScript", ["typescript"]),
+        ("Go", ["go"]),
+        ("Rust", ["rust"]),
+        ("JavaScript and Python", ["python", "javascript"]),
+    ],
+)
+def test_parse_generation_response_normalizes_string_language_constraint_variants(
+    raw_value: str,
+    expected_targets: list[str],
+) -> None:
+    from codemint.synthesize.generate import parse_generation_response
+
+    response = parse_generation_response(
+        {
+            "algorithm_type": "simulation",
+            "difficulty": "medium",
+            "narrative_theme": "warehouse",
+            "constraints": {
+                "n_range": [1, 100],
+                "value_range": [0, 1000],
+                "time_limit": "1s",
+                "memory_limit": "256MB",
+            },
+            "key_trap": "Reference `solve(x)` from the original evidence.",
+            "must_cover": ["exact entry point"],
+            "must_avoid": ["renamed entry point"],
+            "verification_spec": {
+                "min_test_cases": 4,
+                "must_include_edge_cases": ["single value input"],
+                "brute_force_verifiable": True,
+                "brute_force_complexity_limit": "O(n^2)",
+            },
+            "generation_hints": {
+                "solution_approach": "Implement the requested entry point directly.",
+                "common_wrong_approach": "Rename the public callable.",
+                "distinguishing_test": "Call the required function name from the harness.",
+            },
+            "language_constraint": raw_value,
+        }
+    )
+
+    assert response.language_constraint.target_languages == expected_targets
+    assert response.language_constraint.language_specific is (len(expected_targets) == 1)
+
+
+def test_missing_code_block_recovers_entrypoint_from_aggregate_diagnosis_when_cover_is_generic() -> None:
+    from codemint.synthesize.generate import generate_spec
+
+    weakness = WeaknessEntry(
+        rank=1,
+        fault_type="implementation",
+        sub_tags=["missing_code_block"],
+        frequency=2,
+        sample_task_ids=[104],
+        trainability=0.6,
+        collective_diagnosis=CollectiveDiagnosis(
+            refined_root_cause="The required callable entry point is get_column_quantiles(csv_path, quantiles).",
+            capability_cliff="The harness requires get_column_quantiles(csv_path, quantiles) in raw executable output.",
+            misdiagnosed_ids=[],
+            misdiagnosis_corrections={},
+            cluster_coherence=0.91,
+        ),
+    )
+    original_evidence = {
+        "wrong_line": "The answer explains the approach, but the final code block is missing.",
+        "correct_approach": "Return the requested executable implementation directly.",
+        "failed_test": "NameError: name 'get_column_quantiles' is not defined",
+    }
+
+    spec = generate_spec(
+        weakness,
+        diversity_tags=DiversityTags(
+            narrative_theme="warehouses",
+            data_structure="array",
+            constraint_scale="small",
+        ),
+        invoke_model=lambda payload: {
+            "algorithm_type": "simulation",
+            "difficulty": "medium",
+            "narrative_theme": "warehouses",
+            "constraints": {
+                "n_range": [1, 100],
+                "value_range": [0, 1000],
+                "time_limit": "1s",
+                "memory_limit": "256MB",
+            },
+            "key_trap": "The trap reproduces the original final code block is missing failure instead of executable output.",
+            "must_cover": ["basic implementation correctness"],
+            "must_avoid": ["verbatim reuse of prior tasks"],
+            "verification_spec": {
+                "min_test_cases": 4,
+                "must_include_edge_cases": ["single value input"],
+                "brute_force_verifiable": True,
+                "brute_force_complexity_limit": "O(n^2)",
+            },
+            "generation_hints": {
+                "solution_approach": "Return the executable implementation directly.",
+                "common_wrong_approach": "Explain the intended code without emitting it.",
+                "distinguishing_test": "Check that the required callable exists.",
+            },
+            "language_constraint": {
+                "target_languages": ["python"],
+                "language_specific": False,
+            },
+        },
+        original_evidence=original_evidence,
+        spec_index=1,
+    )
+
+    assert any("get_column_quantiles" in item for item in spec.problem_spec.must_cover)
+
+
 def _weakness() -> WeaknessEntry:
     return WeaknessEntry(
         rank=1,
@@ -790,4 +1121,65 @@ def _original_evidence() -> dict[str, str]:
         "wrong_line": "Used `for i in range(l, r)` when the final endpoint should be included.",
         "correct_approach": "Check the terminal index after each expansion.",
         "failed_test": "Segment ending at index n-1 was skipped.",
+    }
+
+
+def _r_original_evidence() -> dict[str, str]:
+    return {
+        "wrong_line": "```r\nsolve <- function(x) {\n  x + 1\n}\n```",
+        "correct_approach": "Return executable R code with solve <- function(x) { x + 1 }.",
+        "failed_test": "The harness expected an R solve function.",
+    }
+
+
+def _java_original_evidence() -> dict[str, str]:
+    return {
+        "wrong_line": "public static int solve(int x) { return x + 1; }",
+        "correct_approach": "Return executable Java code with public static int solve(int x).",
+        "failed_test": "The Java harness called solve(1).",
+    }
+
+
+def _unknown_language_evidence() -> dict[str, str]:
+    return {
+        "wrong_line": "The final code block is missing from the answer.",
+        "correct_approach": "Return the requested executable solution directly.",
+        "failed_test": "No callable implementation was available for execution.",
+    }
+
+
+def _generation_response(
+    *,
+    target_languages: list[str],
+    language_specific: bool,
+    key_trap: str = "The trap reproduces `solve <- function(x)` from the original evidence.",
+) -> dict[str, object]:
+    return {
+        "algorithm_type": "prefix sums",
+        "difficulty": "medium",
+        "narrative_theme": "signals",
+        "constraints": {
+            "n_range": [1, 5000],
+            "value_range": [0, 1000],
+            "time_limit": "1s",
+            "memory_limit": "256MB",
+        },
+        "key_trap": key_trap,
+        "must_cover": ["off_by_one", "boundary updates"],
+        "must_avoid": ["sorting"],
+        "verification_spec": {
+            "min_test_cases": 4,
+            "must_include_edge_cases": ["single element", "last segment"],
+            "brute_force_verifiable": True,
+            "brute_force_complexity_limit": "O(n^2)",
+        },
+        "generation_hints": {
+            "solution_approach": "Track prefix totals and compare window endpoints.",
+            "common_wrong_approach": "Shift the right pointer before evaluating the current window.",
+            "distinguishing_test": "A valid window ending at the final index",
+        },
+        "language_constraint": {
+            "target_languages": target_languages,
+            "language_specific": language_specific,
+        },
     }

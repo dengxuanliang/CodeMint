@@ -166,6 +166,34 @@ def test_build_original_evidence_map_prefers_function_name_mismatch_sample_evide
     assert "solve(x)" in evidence_map["function_name_mismatch"]["correct_approach"]
 
 
+def test_evidence_for_weakness_does_not_fallback_to_collective_narrative() -> None:
+    from codemint.synthesize.pipeline import _evidence_for_weakness
+
+    weakness = WeaknessEntry(
+        rank=1,
+        fault_type="implementation",
+        sub_tags=["missing_code_block"],
+        frequency=1,
+        sample_task_ids=[101],
+        trainability=0.6,
+        collective_diagnosis=CollectiveDiagnosis(
+            refined_root_cause="Executable code is missing because the model keeps explaining the approach.",
+            capability_cliff="The model emits explanation instead of code when code output is required.",
+            misdiagnosed_ids=[],
+            misdiagnosis_corrections={},
+            cluster_coherence=0.9,
+        ),
+    )
+
+    evidence = _evidence_for_weakness(weakness, None)
+
+    assert evidence == {
+        "wrong_line": "Representative missing_code_block failure pattern.",
+        "correct_approach": "Implement the required missing_code_block contract correctly.",
+        "failed_test": "Representative failure unavailable for missing_code_block",
+    }
+
+
 def test_run_synthesize_uses_sample_specific_evidence_per_slot_for_logic_error(tmp_path: Path) -> None:
     from codemint.synthesize.pipeline import run_synthesize
 
@@ -1600,6 +1628,54 @@ def test_markdown_formatting_fallback_references_non_python_original_evidence(tm
     assert "filter_by_prefix" in spec.problem_spec.key_trap
 
 
+def test_markdown_formatting_fallback_uses_inferred_r_language_wording(tmp_path: Path) -> None:
+    from codemint.synthesize.pipeline import _generate_or_log_failure
+
+    weakness = WeaknessEntry(
+        rank=1,
+        fault_type="surface",
+        sub_tags=["markdown_formatting"],
+        frequency=1,
+        sample_task_ids=[815],
+        trainability=0.3,
+        collective_diagnosis=CollectiveDiagnosis(
+            refined_root_cause="Markdown fences pollute raw R output.",
+            capability_cliff="Execution fails when formatting wrappers are preserved.",
+            misdiagnosed_ids=[],
+            misdiagnosis_corrections={},
+            cluster_coherence=0.9,
+        ),
+    )
+
+    spec = _generate_or_log_failure(
+        weakness,
+        output_path=tmp_path / "specs.jsonl",
+        diversity_tags=DiversityTags(
+            narrative_theme="warehouses",
+            data_structure="array",
+            constraint_scale="small",
+        ),
+        spec_index=1,
+        difficulty="medium",
+        invoke_model=lambda payload: (_ for _ in ()).throw(ValueError("model failed")),
+        feasibility_check=lambda payload: {"accepted": True, "reason": "ok"},
+        original_evidence={
+            "wrong_line": "```R\nfilter_by_prefix <- function(strings, prefix) {\n  strings[startsWith(strings, prefix)]\n}\n```",
+            "correct_approach": "Omit the ```R and ``` markdown fences and output only the raw executable R code.",
+            "failed_test": "R source failed because markdown fences were present.",
+        },
+        overlap_threshold=0.5,
+        existing_specs=[],
+        max_attempts=1,
+    )
+
+    assert spec is not None
+    assert spec.language_constraint.target_languages == ["r"]
+    assert spec.language_constraint.language_specific is True
+    assert "raw executable r code" in spec.problem_spec.key_trap.lower()
+    assert spec.generation_hints.solution_approach == "Return raw executable R code only."
+
+
 def test_generate_or_log_failure_uses_builtin_fallback_for_missing_code_block(tmp_path: Path) -> None:
     from codemint.synthesize.pipeline import _generate_or_log_failure
 
@@ -1695,6 +1771,55 @@ def test_missing_code_block_fallback_grounds_non_solve_entrypoint_from_evidence(
     assert not any("solve function" in item.lower() for item in spec.problem_spec.must_cover)
 
 
+def test_missing_code_block_fallback_uses_non_python_language_wording(tmp_path: Path) -> None:
+    from codemint.synthesize.pipeline import _generate_or_log_failure
+
+    weakness = WeaknessEntry(
+        rank=1,
+        fault_type="implementation",
+        sub_tags=["missing_code_block"],
+        frequency=1,
+        sample_task_ids=[204],
+        trainability=0.5,
+        collective_diagnosis=CollectiveDiagnosis(
+            refined_root_cause="The model describes the intended Java solution instead of emitting code.",
+            capability_cliff="Harnesses that compile Java fail when only prose is returned.",
+            misdiagnosed_ids=[],
+            misdiagnosis_corrections={},
+            cluster_coherence=0.9,
+        ),
+    )
+
+    spec = _generate_or_log_failure(
+        weakness,
+        output_path=tmp_path / "specs.jsonl",
+        diversity_tags=DiversityTags(
+            narrative_theme="warehouses",
+            data_structure="array",
+            constraint_scale="small",
+        ),
+        spec_index=1,
+        difficulty="medium",
+        invoke_model=lambda payload: (_ for _ in ()).throw(ValueError("model failed")),
+        feasibility_check=lambda payload: {"accepted": True, "reason": "ok"},
+        original_evidence={
+            "wrong_line": "I would implement public static int solve(int x) in Java, but here is only an explanation.",
+            "correct_approach": "public static int solve(int x) { return x + 1; }",
+            "failed_test": "Java harness expects a compilable solve(int) method.",
+        },
+        overlap_threshold=0.5,
+        existing_specs=[],
+        max_attempts=1,
+    )
+
+    assert spec is not None
+    assert spec.language_constraint.target_languages == ["java"]
+    assert spec.language_constraint.language_specific is True
+    assert "java code" in spec.problem_spec.must_cover[0].lower()
+    assert "method" in spec.problem_spec.must_cover[0].lower()
+    assert spec.generation_hints.solution_approach == "Return the requested `solve` method directly as executable Java code."
+
+
 def test_generate_or_log_failure_uses_builtin_fallback_for_syntax_error(tmp_path: Path) -> None:
     from codemint.synthesize.pipeline import _generate_or_log_failure
 
@@ -1739,6 +1864,103 @@ def test_generate_or_log_failure_uses_builtin_fallback_for_syntax_error(tmp_path
     assert spec is not None
     assert spec.target_weakness.sub_tags == ["syntax_error"]
     assert any("syntactically complete executable code" in item.lower() for item in spec.problem_spec.must_cover)
+
+
+def test_syntax_error_fallback_uses_inferred_non_python_language_constraint(tmp_path: Path) -> None:
+    from codemint.synthesize.pipeline import _generate_or_log_failure
+
+    weakness = WeaknessEntry(
+        rank=1,
+        fault_type="implementation",
+        sub_tags=["syntax_error"],
+        frequency=1,
+        sample_task_ids=[208],
+        trainability=0.6,
+        collective_diagnosis=CollectiveDiagnosis(
+            refined_root_cause="The generated Java code is syntactically incomplete.",
+            capability_cliff="Compilation fails before semantic correctness can be tested.",
+            misdiagnosed_ids=[],
+            misdiagnosis_corrections={},
+            cluster_coherence=0.91,
+        ),
+    )
+
+    spec = _generate_or_log_failure(
+        weakness,
+        output_path=tmp_path / "specs.jsonl",
+        diversity_tags=DiversityTags(
+            narrative_theme="warehouses",
+            data_structure="array",
+            constraint_scale="small",
+        ),
+        spec_index=1,
+        difficulty="medium",
+        invoke_model=lambda payload: (_ for _ in ()).throw(ValueError("model failed")),
+        feasibility_check=lambda payload: {"accepted": True, "reason": "ok"},
+        original_evidence={
+            "wrong_line": "public static int solve(int x) { return x + 1; ",
+            "correct_approach": "Add the missing closing brace so the Java method compiles.",
+            "failed_test": "javac reports reached end of file while parsing",
+        },
+        overlap_threshold=0.5,
+        existing_specs=[],
+        max_attempts=1,
+    )
+
+    assert spec is not None
+    assert spec.language_constraint.target_languages == ["java"]
+    assert spec.language_constraint.language_specific is True
+    assert "java code" in spec.problem_spec.must_cover[0].lower()
+    assert "java code" in spec.generation_hints.solution_approach.lower()
+    assert "missing colons" not in " ".join(spec.problem_spec.must_avoid).lower()
+    assert "function headers" not in " ".join(spec.problem_spec.must_avoid).lower()
+    assert "missing braces" in " ".join(spec.problem_spec.must_avoid).lower()
+
+
+def test_syntax_error_fallback_defaults_to_python_for_unknown_language_evidence(tmp_path: Path) -> None:
+    from codemint.synthesize.pipeline import _generate_or_log_failure
+
+    weakness = WeaknessEntry(
+        rank=1,
+        fault_type="implementation",
+        sub_tags=["syntax_error"],
+        frequency=1,
+        sample_task_ids=[209],
+        trainability=0.6,
+        collective_diagnosis=CollectiveDiagnosis(
+            refined_root_cause="The generated code is syntactically invalid.",
+            capability_cliff="Execution fails before semantic correctness can be tested.",
+            misdiagnosed_ids=[],
+            misdiagnosis_corrections={},
+            cluster_coherence=0.91,
+        ),
+    )
+
+    spec = _generate_or_log_failure(
+        weakness,
+        output_path=tmp_path / "specs.jsonl",
+        diversity_tags=DiversityTags(
+            narrative_theme="warehouses",
+            data_structure="array",
+            constraint_scale="small",
+        ),
+        spec_index=1,
+        difficulty="medium",
+        invoke_model=lambda payload: (_ for _ in ()).throw(ValueError("model failed")),
+        feasibility_check=lambda payload: {"accepted": True, "reason": "ok"},
+        original_evidence={
+            "wrong_line": "broken snippet missing terminator",
+            "correct_approach": "Return syntactically valid code.",
+            "failed_test": "parser rejected the final answer",
+        },
+        overlap_threshold=0.5,
+        existing_specs=[],
+        max_attempts=1,
+    )
+
+    assert spec is not None
+    assert spec.language_constraint.target_languages == ["python"]
+    assert spec.language_constraint.language_specific is False
 
 
 def test_generate_or_log_failure_uses_builtin_fallback_for_non_executable_code(tmp_path: Path) -> None:
