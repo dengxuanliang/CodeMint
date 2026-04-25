@@ -163,6 +163,76 @@ def test_item_mode_model_payload_includes_language_markdown_contract_and_truncat
     assert '"test_code_truncated": true' in prompt
 
 
+def test_item_mode_prioritizes_unrequested_markdown_wrapper_over_model_logic_error(
+    tmp_path: Path,
+) -> None:
+    task = TaskRecord(
+        task_id=56,
+        content=(
+            "Please convert the following code to R, with the function signature "
+            "`filter_by_prefix <- function(strings, prefix)`.\n"
+            "Only implement the target function."
+        ),
+        canonical_solution="filter_by_prefix <- function(strings, prefix) strings",
+        completion="```R\nfilter_by_prefix <- function(strings, prefix) {\n  strings[startsWith(strings, prefix)]\n}\n```",
+        test_code="#<INSERT>\nstopifnot(TRUE)",
+        labels={"programming_language": "R", "execution_language": "R"},
+        accepted=False,
+        metrics={},
+        extra={},
+    )
+
+    result = run_item_mode(
+        [task],
+        output_path=tmp_path / "item.jsonl",
+        rules=[],
+        deep_analyzer=lambda _: _diagnosis(
+            task.task_id,
+            diagnosis_source="model_deep",
+            fault_type="implementation",
+            sub_tags=["logic_error"],
+            severity="high",
+            description="Model focused on an underlying logic defect.",
+        ),
+    )
+
+    assert result[0].fault_type == "surface"
+    assert result[0].sub_tags == ["markdown_formatting"]
+
+
+def test_item_mode_preserves_logic_error_when_markdown_wrapper_is_requested(
+    tmp_path: Path,
+) -> None:
+    task = TaskRecord(
+        task_id=57,
+        content="Please return the solution wrapped in a markdown ```R``` code block.",
+        canonical_solution="all_prefixes <- function(string) substring(string, 1, seq_len(nchar(string)))",
+        completion="```R\nall_prefixes <- function(string) {\n  substring(string, 1, seq_len(nchar(string)))\n}\n```",
+        test_code="#<INSERT>\nstopifnot(TRUE)",
+        labels={"programming_language": "R", "execution_language": "R"},
+        accepted=False,
+        metrics={},
+        extra={},
+    )
+
+    result = run_item_mode(
+        [task],
+        output_path=tmp_path / "item.jsonl",
+        rules=[],
+        deep_analyzer=lambda _: _diagnosis(
+            task.task_id,
+            diagnosis_source="model_deep",
+            fault_type="implementation",
+            sub_tags=["logic_error"],
+            severity="high",
+            description="Underlying logic defect remains primary when fenced output is required.",
+        ),
+    )
+
+    assert result[0].fault_type == "implementation"
+    assert result[0].sub_tags == ["logic_error"]
+
+
 def _task(task_id: int, completion: str) -> TaskRecord:
     return TaskRecord(
         task_id=task_id,

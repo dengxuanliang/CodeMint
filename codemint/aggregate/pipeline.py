@@ -180,72 +180,15 @@ def _apply_collective_adjustments(
     collective_clusters: list[CollectiveCluster],
     tag_mappings: dict[str, str],
 ) -> list[DiagnosisRecord]:
-    reclassifications = _build_reclassifications(collective_clusters)
     adjusted: list[DiagnosisRecord] = []
 
     for diagnosis in diagnoses:
         current = diagnosis.model_copy(deep=True)
         current.sub_tags = _normalize_sub_tags(current.sub_tags, tag_mappings)
 
-        correction = reclassifications.get(current.task_id)
-        if correction is not None and _should_apply_reclassification(current, correction):
-            current.fault_type = correction[0]
-            current.sub_tags = _normalize_sub_tags([correction[1]], tag_mappings)
-
         adjusted.append(current)
 
     return adjusted
-
-
-def _build_reclassifications(
-    collective_clusters: list[CollectiveCluster],
-) -> dict[int, tuple[str, str]]:
-    reclassifications: dict[int, tuple[str, str]] = {}
-    for cluster in collective_clusters:
-        for task_id_text, correction in cluster.collective_diagnosis.misdiagnosis_corrections.items():
-            task_id = _parse_task_id(task_id_text)
-            parsed = _parse_correction(correction)
-            if task_id is None or parsed is None:
-                continue
-            if not _is_valid_fault_type(parsed[0]):
-                continue
-            reclassifications[task_id] = (parsed[0], _canonicalize_sub_tag(parsed[1]))
-    return reclassifications
-
-
-def _should_apply_reclassification(
-    diagnosis: DiagnosisRecord,
-    correction: tuple[str, str],
-) -> bool:
-    primary_tag = diagnosis.sub_tags[0] if diagnosis.sub_tags else "unknown"
-    target_fault_type, target_sub_tag = correction
-    if primary_tag == "function_name_mismatch" and target_fault_type == "implementation" and target_sub_tag == "logic_error":
-        return False
-    return True
-
-
-def _parse_correction(value: str) -> tuple[str, str] | None:
-    fault_type, separator, sub_tag = value.partition(":")
-    if not separator or not sub_tag:
-        return None
-    return fault_type, sub_tag
-
-
-def _parse_task_id(value: str) -> int | None:
-    try:
-        return int(value)
-    except (TypeError, ValueError):
-        return None
-
-
-def _is_valid_fault_type(value: str) -> bool:
-    return value in {
-        "comprehension",
-        "modeling",
-        "implementation",
-        "edge_handling",
-        "surface",
-    }
 
 
 def _normalize_sub_tags(sub_tags: list[str], tag_mappings: dict[str, str]) -> list[str]:
@@ -294,7 +237,7 @@ def _default_collective_diagnosis(cluster) -> CollectiveDiagnosis:
             f"(verification_status={','.join(verification_statuses) or 'unknown'}; "
             f"verification_level={','.join(verification_levels) or 'unknown'})"
         ),
-        capability_cliff=f"{primary_tag} emerges after collective reclassification.",
+        capability_cliff=f"{primary_tag} remains after canonical clustering.",
         misdiagnosed_ids=[],
         misdiagnosis_corrections={},
         cluster_coherence=1.0,

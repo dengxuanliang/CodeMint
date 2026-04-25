@@ -47,6 +47,19 @@ def test_load_config_parses_diagnose_concurrency() -> None:
     assert config.diagnose.concurrency == 3
 
 
+def test_load_config_parses_optional_model_determinism_fields() -> None:
+    config = load_config_from_string(
+        """
+        model:
+          temperature: 0
+          seed: 7
+        """
+    )
+
+    assert config.model.temperature == 0
+    assert config.model.seed == 7
+
+
 def test_load_config_rejects_unknown_diagnose_mode_fields() -> None:
     with pytest.raises(ValueError, match="processing_mode|cluster_representatives|clustered"):
         load_config_from_string(

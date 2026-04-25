@@ -22,6 +22,8 @@ class ModelConfig(StrictModel):
     api_key: str | None = None
     analysis_model: str | None = None
     evaluated_model: str | None = None
+    temperature: float | None = None
+    seed: int | None = None
     max_concurrency: int = 5
     max_retries: int = 3
     retry_backoff: RetryBackoff = "exponential"

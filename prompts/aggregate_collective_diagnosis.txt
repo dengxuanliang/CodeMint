@@ -26,6 +26,8 @@ Rules:
 - `misdiagnosed_ids` must be an array of integers.
 - `misdiagnosis_corrections` values must use the exact format `fault_type:sub_tag`.
 - Allowed `fault_type` values inside corrections are: comprehension, modeling, implementation, edge_handling, surface.
+- Use `misdiagnosed_ids` and `misdiagnosis_corrections` only as observability fields that note borderline cases; do not treat this step as a request to re-route or re-diagnose individual samples.
+- Prefer leaving `misdiagnosed_ids` and `misdiagnosis_corrections` empty unless a case is clearly ambiguous and worth flagging for human inspection.
 - `cluster_coherence` must be a number between 0.0 and 1.0.
 - `semantic_merges` must be an array of objects.
 - Each semantic merge must include `source_tag`, `target_tag`, and boolean `confirmed`.

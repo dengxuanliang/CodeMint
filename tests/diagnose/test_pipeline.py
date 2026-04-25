@@ -277,6 +277,68 @@ def test_run_diagnose_processes_missing_tasks_with_bounded_parallelism(tmp_path:
     assert sorted(row["task_id"] for row in read_jsonl(output_path)) == [31, 32]
 
 
+def test_run_diagnose_parallel_persists_new_rows_in_input_order(tmp_path: Path) -> None:
+    tasks = [
+        _task(33, "Program returns the wrong total for some inputs."),
+        _task(34, "Program returns the wrong total for some inputs."),
+    ]
+    output_path = tmp_path / "diagnoses.jsonl"
+    release_first = threading.Event()
+    release_second = threading.Event()
+
+    def deep_analyzer(task: TaskRecord) -> DiagnosisRecord:
+        if task.task_id == 33:
+            if not release_first.wait(timeout=1):
+                pytest.fail("expected first task to wait while second task completes")
+        if task.task_id == 34:
+            release_first.set()
+            release_second.set()
+        if not release_second.wait(timeout=1):
+            pytest.fail("expected both diagnose workers to complete")
+        return _diagnosis(task.task_id, diagnosis_source="model_deep")
+
+    diagnoses = run_diagnose(
+        tasks,
+        output_path,
+        rules=build_rules(),
+        config=CodeMintConfig.model_validate({"diagnose": {"concurrency": 2}}),
+        deep_analyzer=deep_analyzer,
+    )
+
+    assert [diagnosis.task_id for diagnosis in diagnoses] == [33, 34]
+    assert [row["task_id"] for row in read_jsonl(output_path)] == [33, 34]
+
+
+def test_run_diagnose_parallel_persists_completed_ordered_prefix_before_later_failure(
+    tmp_path: Path,
+) -> None:
+    tasks = [
+        _task(35, "Program returns the wrong total for some inputs."),
+        _task(36, "Program returns the wrong total for some inputs."),
+    ]
+    output_path = tmp_path / "diagnoses.jsonl"
+    first_done = threading.Event()
+
+    def deep_analyzer(task: TaskRecord) -> DiagnosisRecord:
+        if task.task_id == 35:
+            first_done.set()
+            return _diagnosis(task.task_id, diagnosis_source="model_deep")
+        if not first_done.wait(timeout=1):
+            pytest.fail("expected first task to complete before later failure")
+        raise RuntimeError("later diagnose failed")
+
+    with pytest.raises(RuntimeError, match="later diagnose failed"):
+        run_diagnose(
+            tasks,
+            output_path,
+            rules=build_rules(),
+            config=CodeMintConfig.model_validate({"diagnose": {"concurrency": 2}}),
+            deep_analyzer=deep_analyzer,
+        )
+
+    assert [row["task_id"] for row in read_jsonl(output_path)] == [35]
+
+
 def test_run_diagnose_defaults_to_serial_execution(tmp_path: Path) -> None:
     tasks = [
         _task(41, "Program returns the wrong total for some inputs."),
@@ -312,6 +374,60 @@ def test_run_diagnose_defaults_to_serial_execution(tmp_path: Path) -> None:
     worker.join(timeout=1)
     assert not worker.is_alive(), "serial diagnose worker thread should complete"
     assert sorted(row["task_id"] for row in read_jsonl(output_path)) == [41, 42]
+
+
+def test_run_diagnose_retains_single_primary_canonical_weakness(tmp_path: Path) -> None:
+    task = _task(51, "Completion")
+    output_path = tmp_path / "diagnoses.jsonl"
+
+    diagnoses = run_diagnose(
+        [task],
+        output_path,
+        rules=[],
+        deep_analyzer=lambda _: _diagnosis(
+            task.task_id,
+            diagnosis_source="model_deep",
+            fault_type="implementation",
+            sub_tags=["non_executable_code", "missing_code_block", "logic_error"],
+            description="Echoed the prompt instead of returning executable code.",
+        ),
+    )
+
+    assert diagnoses[0].sub_tags == ["non_executable_code"]
+    assert read_jsonl(output_path)[0]["sub_tags"] == ["non_executable_code"]
+
+
+@pytest.mark.parametrize(
+    ("sub_tag", "expected_fault_type"),
+    [
+        ("function_name_mismatch", "implementation"),
+        ("markdown_formatting", "surface"),
+        ("missing_code_block", "comprehension"),
+        ("syntax_error", "implementation"),
+        ("logic_error", "implementation"),
+        ("non_executable_code", "comprehension"),
+    ],
+)
+def test_run_diagnose_normalizes_fault_type_from_primary_canonical_weakness(
+    tmp_path: Path,
+    sub_tag: str,
+    expected_fault_type: str,
+) -> None:
+    task = _task(52, "Completion")
+
+    diagnoses = run_diagnose(
+        [task],
+        tmp_path / "diagnoses.jsonl",
+        rules=[],
+        deep_analyzer=lambda _: _diagnosis(
+            task.task_id,
+            diagnosis_source="model_deep",
+            fault_type="modeling",
+            sub_tags=[sub_tag],
+        ),
+    )
+
+    assert diagnoses[0].fault_type == expected_fault_type
 
 
 def test_default_confirmation_preserves_rule_metadata(tmp_path: Path) -> None:
@@ -646,7 +762,7 @@ def test_run_diagnose_retries_when_fault_type_uses_canonical_weakness_tag(
     assert "sub_tags" in prompts[2]
 
 
-def test_run_diagnose_maps_noncanonical_secondary_tags_back_to_allowed_taxonomy(tmp_path: Path) -> None:
+def test_run_diagnose_maps_noncanonical_tags_to_single_primary_allowed_taxonomy(tmp_path: Path) -> None:
     task = _task(18, "Completion")
     output_path = tmp_path / "diagnoses.jsonl"
 
@@ -662,7 +778,7 @@ def test_run_diagnose_maps_noncanonical_secondary_tags_back_to_allowed_taxonomy(
         ),
     )
 
-    assert diagnoses[0].sub_tags == ["missing_code_block", "syntax_error", "markdown_formatting"]
+    assert diagnoses[0].sub_tags == ["missing_code_block"]
 
 
 @pytest.mark.parametrize("sub_tags", [["correct_output"], ["correct_execution"], ["correct_solution"], ["pass"]])

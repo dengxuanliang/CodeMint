@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
@@ -13,7 +14,7 @@ from codemint.diagnose.confirm import (
     default_confirm_analyzer,
 )
 from codemint.diagnose.deep import DeepAnalyzer, deep_analyze_with_model
-from codemint.diagnose.payloads import build_diagnose_payload
+from codemint.diagnose.payloads import build_diagnose_payload, prompt_requests_markdown_wrapper
 from codemint.diagnose.resume import find_missing_task_ids
 from codemint.io.jsonl import append_jsonl, read_jsonl
 from codemint.modeling.client import ModelClient
@@ -53,6 +54,15 @@ _ALLOWED_FAILURE_SUB_TAGS = frozenset(
         "non_executable_code",
     }
 )
+
+_CANONICAL_FAULT_TYPE_BY_SUB_TAG = {
+    "function_name_mismatch": "implementation",
+    "markdown_formatting": "surface",
+    "missing_code_block": "comprehension",
+    "syntax_error": "implementation",
+    "logic_error": "implementation",
+    "non_executable_code": "comprehension",
+}
 
 
 def run_item_mode(
@@ -99,15 +109,36 @@ def run_item_mode(
         return existing_diagnoses + new_diagnoses
 
     max_workers = min(concurrency, len(tasks_to_process))
+    ordered_task_ids = [task.task_id for task in tasks_to_process]
+    next_to_persist = 0
+
+    def persist_ready_prefix(completed_by_task_id: dict[int, DiagnosisRecord]) -> int:
+        nonlocal next_to_persist
+        while (
+            next_to_persist < len(ordered_task_ids)
+            and ordered_task_ids[next_to_persist] in completed_by_task_id
+        ):
+            task_id = ordered_task_ids[next_to_persist]
+            diagnosis = completed_by_task_id.pop(task_id)
+            new_diagnoses.append(diagnosis)
+            append_jsonl(output_path, [diagnosis.model_dump(mode="json")])
+            next_to_persist += 1
+        return next_to_persist
+
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_task_id = {
             executor.submit(_diagnose_task, task, engine, confirmer, deep): task.task_id
             for task in tasks_to_process
         }
+        completed_by_task_id: dict[int, DiagnosisRecord] = {}
         for future in as_completed(future_to_task_id):
-            diagnosis = future.result()
-            new_diagnoses.append(diagnosis)
-            append_jsonl(output_path, [diagnosis.model_dump(mode="json")])
+            try:
+                diagnosis = future.result()
+            except Exception:
+                persist_ready_prefix(completed_by_task_id)
+                raise
+            completed_by_task_id[diagnosis.task_id] = diagnosis
+            persist_ready_prefix(completed_by_task_id)
             processed += 1
             if progress_callback is not None:
                 progress_callback(
@@ -120,6 +151,8 @@ def run_item_mode(
                         "eta_seconds": max(len(tasks) - processed, 0) * 3,
                     }
                 )
+
+    persist_ready_prefix(completed_by_task_id)
 
     return existing_diagnoses + new_diagnoses
 
@@ -145,11 +178,11 @@ def _diagnose_task(
 
     if matched_rule and matched_rule.severity in {"medium", "high"}:
         if matched_rule.rule_id == "R010":
-            return _normalize_diagnosis_record(deep_analyze_with_model(task, deep_analyzer))
-        return _normalize_diagnosis_record(confirm_rule_with_model(task, matched_rule, confirm_analyzer))
+            return _normalize_diagnosis_record(deep_analyze_with_model(task, deep_analyzer), task=task)
+        return _normalize_diagnosis_record(confirm_rule_with_model(task, matched_rule, confirm_analyzer), task=task)
     if matched_rule and matched_rule.rule_id != "R010":
-        return _normalize_diagnosis_record(diagnosis_from_rule_only(task, matched_rule))
-    return _normalize_diagnosis_record(deep_analyze_with_model(task, deep_analyzer))
+        return _normalize_diagnosis_record(diagnosis_from_rule_only(task, matched_rule), task=task)
+    return _normalize_diagnosis_record(deep_analyze_with_model(task, deep_analyzer), task=task)
 
 
 def diagnosis_from_rule_only(task: TaskRecord, rule: DiagnosisRule) -> DiagnosisRecord:
@@ -255,15 +288,30 @@ def _fallback_deep_analyzer(task: TaskRecord) -> DiagnosisRecord:
     )
 
 
-def _normalize_diagnosis_record(record: DiagnosisRecord) -> DiagnosisRecord:
+def _normalize_diagnosis_record(record: DiagnosisRecord, task: TaskRecord | None) -> DiagnosisRecord:
     normalized_sub_tags = _normalize_sub_tags(record.sub_tags)
+    normalized_sub_tags = _stabilize_primary_sub_tags(normalized_sub_tags, task)
     diagnosis_source = _normalize_diagnosis_source(record.diagnosis_source, normalized_sub_tags)
+    fault_type = _normalize_fault_type(record.fault_type, normalized_sub_tags, diagnosis_source)
     return record.model_copy(
         update={
+            "fault_type": fault_type,
             "sub_tags": normalized_sub_tags,
             "diagnosis_source": diagnosis_source,
         }
     )
+
+
+def _stabilize_primary_sub_tags(sub_tags: list[str], task: TaskRecord | None) -> list[str]:
+    if task is None or not sub_tags:
+        return sub_tags
+    if sub_tags[0] != "logic_error":
+        return sub_tags
+    if prompt_requests_markdown_wrapper(task.content):
+        return sub_tags
+    if not _has_outer_markdown_fence(task.completion):
+        return sub_tags
+    return ["markdown_formatting"]
 
 
 def _normalize_sub_tags(sub_tags: list[str]) -> list[str]:
@@ -278,14 +326,25 @@ def _normalize_sub_tags(sub_tags: list[str]) -> list[str]:
 
     failure_tags = [tag for tag in normalized if tag not in SUCCESS_LIKE_SUB_TAGS]
     if failure_tags:
-        return failure_tags
+        return [failure_tags[0]]
     return normalized or ["unknown"]
+
+
+def _has_outer_markdown_fence(text: str) -> bool:
+    stripped = text.strip()
+    return bool(re.fullmatch(r"```[A-Za-z0-9_+-]*\s*.*\s*```", stripped, flags=re.DOTALL))
 
 
 def _normalize_diagnosis_source(diagnosis_source: str, sub_tags: list[str]) -> str:
     if sub_tags and set(sub_tags).issubset(SUCCESS_LIKE_SUB_TAGS):
         return "non_failure"
     return diagnosis_source
+
+
+def _normalize_fault_type(fault_type: str, sub_tags: list[str], diagnosis_source: str) -> str:
+    if diagnosis_source == "non_failure" or not sub_tags:
+        return fault_type
+    return _CANONICAL_FAULT_TYPE_BY_SUB_TAG.get(sub_tags[0], fault_type)
 
 
 def _validate_unique_task_ids(tasks: list[TaskRecord]) -> None:
@@ -300,7 +359,7 @@ def _load_existing_diagnoses(output_path: Path) -> list[DiagnosisRecord]:
     if not output_path.exists():
         return []
 
-    return [_normalize_diagnosis_record(DiagnosisRecord.model_validate(row)) for row in read_jsonl(output_path)]
+    return [_normalize_diagnosis_record(DiagnosisRecord.model_validate(row), task=None) for row in read_jsonl(output_path)]
 
 
 def _build_model_client(config: CodeMintConfig) -> ModelClient | None:
@@ -312,7 +371,7 @@ def _build_model_client(config: CodeMintConfig) -> ModelClient | None:
 
 def _parse_diagnosis_with_retry(invoke) -> DiagnosisRecord:
     record = _parse_diagnosis_schema_with_retry(invoke)
-    normalized = _normalize_diagnosis_record(record)
+    normalized = _normalize_diagnosis_record(record, task=None)
     error = _taxonomy_error(normalized)
     if error is None:
         return normalized
@@ -322,7 +381,7 @@ def _parse_diagnosis_with_retry(invoke) -> DiagnosisRecord:
             _taxonomy_retry_prompt(error, format_error)
         ),
     )
-    normalized_retry = _normalize_diagnosis_record(reparsed)
+    normalized_retry = _normalize_diagnosis_record(reparsed, task=None)
     error_retry = _taxonomy_error(normalized_retry)
     if error_retry is not None:
         raise ValueError(error_retry)

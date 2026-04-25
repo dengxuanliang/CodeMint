@@ -55,7 +55,7 @@ def test_semantic_tag_merge_records_mapping_when_model_confirms() -> None:
     assert seen_payloads == [[1], [1, 2]]
 
 
-def test_collective_diagnosis_reclassifies_misdiagnosed_ids(tmp_path: Path) -> None:
+def test_collective_diagnosis_records_misdiagnosed_ids_without_reclassification(tmp_path: Path) -> None:
     from codemint.aggregate.pipeline import run_aggregate
 
     diagnoses = [
@@ -81,15 +81,14 @@ def test_collective_diagnosis_reclassifies_misdiagnosed_ids(tmp_path: Path) -> N
         collective_analyze=collective_stub,
     )
 
-    assert len(report.weaknesses) == 2
-    implementation = next(entry for entry in report.weaknesses if entry.fault_type == "implementation")
-    modeling = next(entry for entry in report.weaknesses if entry.fault_type == "modeling")
-    assert implementation.frequency == 1
-    assert implementation.sample_task_ids == [10]
+    assert len(report.weaknesses) == 1
+    implementation = report.weaknesses[0]
+    assert implementation.fault_type == "implementation"
+    assert implementation.sub_tags == ["logic_error"]
+    assert implementation.frequency == 2
+    assert implementation.sample_task_ids == [10, 11]
     assert implementation.collective_diagnosis.misdiagnosed_ids == [11]
     assert implementation.collective_diagnosis.misdiagnosis_corrections == {"11": "modeling:state_tracking"}
-    assert modeling.sub_tags == ["logic_error"]
-    assert modeling.sample_task_ids == [11]
 
 
 def test_semantic_tag_merge_chains_normalize_to_final_canonical_tag() -> None:
@@ -293,7 +292,7 @@ def test_malformed_misdiagnosis_corrections_are_ignored_safely(tmp_path: Path) -
     }
 
 
-def test_reclassified_tag_is_renormalized_to_canonical_mapping(tmp_path: Path) -> None:
+def test_collective_corrections_do_not_reclassify_cluster_members(tmp_path: Path) -> None:
     from codemint.aggregate.pipeline import run_aggregate
 
     diagnoses = [
@@ -341,9 +340,9 @@ def test_reclassified_tag_is_renormalized_to_canonical_mapping(tmp_path: Path) -
         collective_analyze=collective_stub,
     )
 
-    modeling = next(entry for entry in report.weaknesses if entry.fault_type == "modeling")
-    assert modeling.sub_tags == ["logic_error"]
-    assert modeling.sample_task_ids == [31]
+    implementation = next(entry for entry in report.weaknesses if entry.fault_type == "implementation")
+    assert implementation.sub_tags == ["logic_error"]
+    assert implementation.sample_task_ids == [30, 31]
     assert report.tag_mappings["index_bounds"] == "logic_error"
 
 

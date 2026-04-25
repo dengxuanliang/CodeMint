@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 
 import httpx
@@ -188,3 +189,30 @@ def test_model_client_does_not_duplicate_chat_completions_suffix(monkeypatch: py
 
     assert client.complete("system prompt", "user prompt") == "ok"
     assert seen["url"] == "https://example.test/chat/completions"
+
+
+def test_model_client_includes_determinism_fields_in_payload() -> None:
+    captured: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.update(json.loads(request.content.decode()))
+        return httpx.Response(
+            200,
+            json={"choices": [{"message": {"content": "{}"}}]},
+        )
+
+    client = ModelClient(
+        ModelConfig(
+            base_url="https://example.test/v1",
+            api_key="secret",
+            analysis_model="gpt-test",
+            temperature=0,
+            seed=7,
+        ),
+        transport=httpx.MockTransport(handler),
+    )
+
+    client.complete("system", "user")
+
+    assert captured["temperature"] == 0
+    assert captured["seed"] == 7

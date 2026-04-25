@@ -50,13 +50,18 @@ class ModelClient:
         raise last_error
 
     def _build_payload(self, system_prompt: str, user_prompt: str) -> dict[str, Any]:
-        return {
+        payload = {
             "model": self._config.analysis_model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
         }
+        if self._config.temperature is not None:
+            payload["temperature"] = self._config.temperature
+        if self._config.seed is not None:
+            payload["seed"] = self._config.seed
+        return payload
 
     def _build_headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json"}
